@@ -1,89 +1,127 @@
-# iOS PWAエンジニア向け万能ツール 設計提案書
+# iOS PWAエンジニア向け万能ツール 設計提案書 (詳細版)
 
 ## 1. 概要
-本プロジェクトは、iPadOS上のSafari（PWA）において、オフライン環境でもエンジニアが汎用的に問題解決を行える「激軽」なツール群を提供することを目的とする。
-iOS 16.4以降でサポートされたOrigin Private File System (OPFS) を中核とし、高速なファイルI/O、テキスト編集、コマンドライン操作、および独自スクリプトの実行を可能にする。
+本プロジェクトは、iPadOS上のSafari（PWA）において、オフライン環境でもエンジニアが汎用的に問題解決を行える「超軽量・高性能」なツール群を設計する。
+iOS 16.4以降のOrigin Private File System (OPFS) とWebAssembly (Rust) を中核に据え、OSの制約を回避しつつ、デスクトップ級の操作体験を提供することを目指す。
 
-## 2. システム構成案
-「激軽」な動作を実現するため、UIとロジックを完全に分離し、重い処理をWebWorker上のRust/Wasmで実行する構成を採用する。
+## 2. 詳細システム構成案
 
-### テクノロジースタック
-- **Frontend**: Svelte + TypeScript
-  - 仮想DOMを使わず、コンパイル時に最適化されるSvelteを採用し、iPadOS上での描画負荷を最小限に抑える。
-- **Logic Engine**: Rust (WebAssembly)
-  - ファイル解析、コマンドエミュレーション、スクリプト実行エンジンをRustで実装。Wasmとしてビルドし、WebWorker内で動作させる。
-- **Storage**: Origin Private File System (OPFS)
-  - `FileSystemSyncAccessHandle` を利用し、Workerスレッドから同期I/Oを行うことで、大容量ファイルや頻繁な書き込みでもメインスレッドをブロックしない。
-- **Communication**: Comlink
-  - メインスレッド（Svelte）とWorkerスレッド（Rust/Wasm）間の通信を型安全かつ簡潔に行う。
+### 2.1. 階層化アーキテクチャ
+「動作の激軽さ」を担保するため、以下の3層構造とする。
 
-## 3. コア・アーキテクチャ：OPFS File Management
-iOS Safariにおけるファイル操作のボトルネックを解消するため、以下の実装方針をとる。
+1.  **UI Layer (Svelte + TS)**: 描画に徹する。ステート管理は最小限とし、重い処理の結果を受け取るだけのリアクティブなフロントエンド。
+2.  **Orchestrator Layer (Web Worker + Comlink)**: JSで記述。Rust/Wasmのライフサイクル管理、UIからのRPC受け付け、OPFSの非同期ハンドル（メインスレッド用）と同期ハンドル（Rust用）の橋渡しを行う。
+3.  **Engine Layer (Rust + Wasm)**: 実際のロジック（ファイル解析、シェルエミュレーション、スクリプト実行）。`SyncAccessHandle` を通じてOPFSに直接、同期的にアクセスする。
 
-- **同期アクセスの活用**: WebWorker内でのみ使用可能な `createSyncAccessHandle` を使用。これにより、Rust側から標準的なファイル操作に近いパフォーマンスでOPFS上のデータにアクセスできる。
-- **永続化戦略**: ユーザーが「ファイルアプリ」からインポートしたファイルは即座にOPFS内にコピーし、以降の編集・閲覧はすべてOPFS内で行う。エクスポート時のみ外部へ出力する。
+### 2.2. OPFS管理とI/O戦略
+iOS Safariのメモリ・ストレージ制限を考慮した実装。
+- **SyncAccessHandle Pooling**: `createSyncAccessHandle()` は高コストなため、Worker起動時に主要ファイル用のハンドルをプールし、使い回す。
+- **Byte-Range Reading**: 巨大なファイル（ログ、PDF）を扱う際、ファイル全体をメモリにロードせず、Rust側のポインタ移動で必要なバイト範囲のみを `read()` する。これにより、数百MBのファイルでも低メモリ消費で即座に開ける。
+- **Quota Management**: `navigator.storage.estimate()` を定期的に監視し、ストレージ容量が逼迫した際の自動クリーンアップ（一時ディレクトリの削除）を実装。
 
-## 4. 各機能の具体的実装
+## 3. 機能を支える具体的仕様
 
-### 4.1. 高速PDFビューア
-ライブラリの肥大化を避けるため、可能な限りiOS Safariのネイティブ機能を活用する。
-- **実装方法**:
-  - OPFS上のPDFデータを `URL.createObjectURL(blob)` で一時的なURLに変換し、`<iframe>` または `<object>` タグで表示する。
-  - iPadOSのSafariはPDFをネイティブで高度に処理できるため、JSベースの重いビューア（pdf.jsなど）を使わずに、メモリ消費を最小限に抑える。
-  - ページ切り替えなどは、OPFSから必要なバイトレンジだけを読み込むようにして、巨大なPDFでも即座に開けるよう工夫する。
+### 3.1. 仮想ファイルシステム (VFS) と CLI 詳細
+Rust側で構築する独自のVFSレイヤーにより、OSのファイルシステム制限を超えた操作を実現する。
 
-### 4.2. CodeMirrorによるテキスト編集
-エンジニアにとって必須の「書き味」を確保しつつ、動作を軽くする。
-- **実装方法**:
-  - **CodeMirror 6 (CM6)** を採用。CM6はモジュール性が高く、必要な機能（シンタックスハイライト、行番号など）だけを選択してバンドルできる。
-  - **Lazy Loading**: 編集対象の拡張子に合わせて、プログラミング言語のモード（Rust, JS, Python等）を動的にインポートする。
-  - **Virtual Scrolling**: 巨大なログファイル等を開く際は、CM6の標準機能であるビューポート内の描画最適化を活用する。
+- **VFS構成**:
+    - **Root**: `/` をOPFSのルートにマッピング。
+    - **Mount Point**: `/mnt/icloud` (File Picker経由の外部アクセス), `/dev/null`, `/tmp` (メモリ内KVS) などを仮想的に提供。
+- **コマンド実装詳細**:
+    - `ls [-l, -a]`: `FileSystemDirectoryHandle.values()` をイテレートし、Rust側でメタデータ（サイズ、最終更新）を整形。
+    - `grep`: ファイルを `chunk` 単位で読み込み、マルチスレッド（WebWorkerの並列化）で正規表現検索を実行。
+    - `find`: 再帰的なハンドル取得をスタックベースで実装し、メモリ消費を抑制。
+    - `xargs`: 前段のコマンド出力をパースし、逐次コマンド実行。
+- **ターミナル実装 (iPad最適化)**:
+    - **Input Buffer**: ソフトウェアキーボードの「確定」イベントを待たずに1文字ずつRust側に送り、リアクティブな補完を実現。
+    - **Special Key Emulation**: 画面端に `Ctrl`, `Esc`, `Tab`, `Shift` などの仮想キーを配置し、キーボードなしのiPad操作を補完する。
 
-### 4.3. Linuxコマンド・エミュレータ
-OPFSをルートディレクトリに見立てた、疑似的なシェル環境を提供する。
-- **実装方法**:
-  - **xterm.js**: フロントエンドのターミナルUIとしてデファクトスタンダードであり、iPadのソフトウェアキーボードとも相性が良い。
-  - **Rustコマンド実装**: `ls`, `cat`, `grep`, `mkdir`, `rm`, `cd` などの基本コマンドをRustで実装。これらはWasm経由でOPFSのSyncハンドルを叩くため、非常に高速に動作する。
-  - **パイプライン**: `ls | grep .ts` のような単純なパイプライン処理をRust側でパースして実行する。
+### 3.2. Mini-ShellScript (MSS) 言語仕様・実装詳細
+エンジニアが現場で「10行程度の自動化」を即座に記述・実行するためのドメイン特化言語。
 
-### 4.4. 独自の手抜きスクリプト言語「Mini-ShellScript (MSS)」
-自動化のための最小限の言語。Rustで再帰下降構文解析を行うシンプルなインタプリタを実装する。
-- **言語仕様**:
-  - 型なし（すべて文字列または数値）。
-  - 基本構文: `set var = value`, `if`, `for`, `print`。
-  - コマンド呼び出し: 上記のLinuxエミュレータ上のコマンドを直接記述できる。
-- **実装方法**:
-  - 速度を優先し、中間コードを生成せず、抽象構文木（AST）を直接評価する。
-  - WebWorker内で動作するため、スクリプトが無限ループに陥ってもUIスレッドは停止しない。
-  - `MSS` ファイルとしてOPFSに保存し、いつでも呼び出し可能にする。
+- **詳細文法 (EBNF)**:
+    ```ebnf
+    program      = { statement } ;
+    statement    = assignment | if_stmt | for_stmt | command_call | func_def ;
+    assignment   = "$" , identifier , "=" , ( expression | backtick_cmd ) ;
+    if_stmt      = "if" , condition , "{" , program , "}" , [ "else" , "{" , program , "}" ] ;
+    for_stmt     = "for" , "$" , identifier , "in" , list_expr , "{" , program , "}" ;
+    command_call = "@" , command_name , { arg } ;
+    backtick_cmd = "`" , command_call , "`" ; (* コマンド出力を変数に代入 *)
+    arg          = string | "$" , identifier | backtick_cmd ;
+    ```
+- **ランタイム仕様**:
+    - **変数スコープ**: グローバルスコープのみ。関数内変数は動的スコープ（実装簡略化のため）。
+    - **組み込み関数**: `print()`, `len()`, `sleep()`, `http_get()`, `write_file()`, `read_file()`。
+    - **エラーハンドリング**: スクリプト全体を `try-catch` 的な構造でRust側がラップし、エラー発生時はスタックトレースとファイル位置（行・列）を表示。
+- **実装アプローチ**:
+    - **Lexer/Parser**: Rustの `logos` (Lexer) と `nom` (Parser) クレートを使用し、バイナリサイズを抑えつつ高速なパースを実現。
+    - **Interpreter**: `Box<Expr>` を再帰的に評価する AST Walker。各 `statement` 実行前に Worker の `postMessage` で進捗をUIに通知し、長時間実行時の「応答なし」を防ぐ。
 
-## 5. エンジニア向け追加推奨機能
+- **スクリプト例 (MSS)**:
+    ```bash
+    # ログから特定の行を抽出してSQLiteに保存する例
+    $target = "error.log"
+    $output = ` @grep "ERROR" $target `
 
-### 5.1. SQLite Wasm (OPFS VFS)
-構造化データの管理や、ちょっとしたSQLの動作確認用。
-- **実装方法**:
-  - `sqlite.org` が公式提供しているWasmビルドを利用。
-  - OPFSをストレージとして使うVFS（Virtual File System）が既に公式サポートされているため、これを利用して「オフラインでも消えないDB」を構築する。
+    @ls -l $target
 
-### 5.2. Mermaid.js による図解生成
-システム設計やフローチャートをその場で描くため。
-- **実装方法**:
-  - `Mermaid.js` を利用。CodeMirrorで書いたテキストを即座にSVG/PNGとしてレンダリングするプレビュー画面を用意。
-  - レンダリング結果をOPFSに画像として保存する機能を付け、ドキュメント作成を支援する。
+    if $output {
+        @print "Errors found. Saving to DB..."
+        @sqlite "INSERT INTO logs (content) VALUES ('" + $output + "')"
+    }
+    ```
 
-### 5.3. 簡易HTTPリクエストテスター (Curl-like UI)
-APIの動作確認用（オフラインでは不可だが、オンライン復帰時のデバッグに有用）。
-- **実装方法**:
-  - `fetch` APIをラップしたシンプルなUI。
-  - 実行結果（JSONなど）を直接CodeMirrorで開いたり、OPFSに保存したりする。
+### 3.3. SQLite Wasm & Mermaid.js 実装詳細
 
-## 6. iPadでの「激軽」動作・オフライン対応のための最適化
+#### 3.3.1. SQLite Wasm (OPFS VFS)
+- **VFS構成**: SQLite公式の `opfs-sah-pool` VFSを採用。
+    - **SAH Pool**: 複数の `FileSystemSyncAccessHandle` を事前に確保（プール）し、SQLiteのページ書き込み要求に対して動的に割り当てる。これにより、Safariでのハンドル生成オーバーヘッドを回避。
+- **Worker通信構成**:
+    - メインスレッドからはSQL文字列を送り、Worker側で `Uint8Array` のレコードセットを受け取るストリーム形式。
+    - 大容量データの取得時は、`SharedArrayBuffer` を介したゼロコピー転送を行い、UIのプチフリーズを防止。
 
-- **Service Workerによる完全オフライン対応**:
-  - 全アセット（Wasmファイル含む）をCache APIでキャッシュし、飛行機内などの完全オフライン環境でも起動可能にする。
-- **SharedArrayBufferの活用**:
-  - Rust/Wasmとメインスレッド間でのデータ転送をゼロコピー化するために `SharedArrayBuffer` を検討する（iOS 15.2以降、適切なCOOP/COEPヘッダー下で利用可能）。
-- **Web Workerの積極活用**:
-  - ファイルのパース、シンタックスハイライト（の重い計算）、スクリプト実行はすべて別スレッドで行い、メインスレッド（UI）の60FPSを死守する。
-- **iPad特化のUI**:
-  - iPadOSのマルチタスク（Split View）を考慮し、画面幅が狭くても使いやすいレスポンシブなサイドバー構成にする。
+#### 3.3.2. Mermaid.js 描画パイプライン
+- **Headless Rendering**: `Mermaid.js` をメインスレッドで動かすとDOM操作が重いため、隠し iframe 内でレンダリングするか、可能であれば `mermaid-cli` 相当のロジックを Worker 内の `OffscreenCanvas` (2D操作のみ) でエミュレートする。
+- **Cache & Preview**:
+    - CodeMirrorの入力が止まってから 500ms 後にレンダリング。
+    - 生成されたSVGはOPFSの `.cache/mermaid/` にハッシュ値名で保存し、次回以降の高速表示に利用。
+
+### 3.4. PDF/Text プレビュー実装
+- **PDF**:
+    - `URL.createObjectURL` で生成したBlob URLを `<iframe>` に流し込む。
+    - 注釈の書き込みが必要な場合のみ、軽量な `PDF-Lib` をWorker側で動かし、変更後のBlobを再生成してリロードする（UIスレッドを止めない）。
+- **Editor**:
+    - CodeMirror 6 を「Headless」に近い状態で利用。シンタックスハイライト（Tree-sitter Wasm等）はWorkerで計算し、差分のみをCM6の `Decoration` として適用することで、超巨大ファイルの編集負荷を分散。
+
+## 4. フロントエンド・バックエンド通信とiPad最適化
+
+### 4.1. Worker通信プロトコル (Message Schema)
+UIスレッドとWorker間のやり取りを構造化する。
+
+- **Request/Response 型定義**:
+    ```typescript
+    type Request =
+      | { type: 'EXEC_CMD', cmd: string, args: string[] }
+      | { type: 'READ_FILE', path: string, offset: number, length: number }
+      | { type: 'SQL_QUERY', sql: string }
+      | { type: 'RUN_SCRIPT', code: string };
+
+    type Response =
+      | { type: 'STDOUT', data: string }
+      | { type: 'FILE_DATA', buffer: ArrayBuffer }
+      | { type: 'ERROR', message: string, code: number };
+    ```
+- **転送の最適化**: 巨大なファイルデータは `Transferable Objects` を利用して所有権を移動させ、コピーコストをゼロにする。
+
+### 4.2. iPad固有のUX・パフォーマンス設計
+- **Keyboard Shortcuts**: `Cmd+S` (Save), `Cmd+P` (Command Palette), `Ctrl+C` (Interrupt) 等のハンドリングをJS側でグローバルに補足。
+- **Focus Management**: ターミナルからエディタ、あるいは検索バーへの移動をタブキーで循環できるよう `tabindex` を動的に管理。
+- **PWA Lifecycle**: iPadOSがバックグラウンドでPWAをサスペンドさせた際の状態保存（セッション復元）を `IndexedDB` に定期的にオートセーブ。
+- **Apple Pencil サポート**: Canvas APIを用いた手書きメモ機能。Mermaid.jsの生成図に「手書き」で注釈を加えるレイヤーを実装。
+
+## 5. オフライン・デプロイ戦略
+- **Service Worker (Workbox)**:
+    - `runtimeCaching` を設定し、`*.wasm` や `xterm.js` などの静的アセットを `CacheFirst` で保持。
+    - **Offline Sync**: オフライン中に編集したメタデータを記録し、オンライン復帰時に任意のリモート（GitHub等）と同期するフックを用意。
+- **PWA Manifest**: `display: standalone` かつ `orientation: landscape` を推奨し、iPadを横向きで「ラップトップ」のように使う体験を固定。
