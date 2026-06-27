@@ -1,11 +1,11 @@
-use crate::vfs::VFS;
+use crate::vfs::get_vfs;
 use regex::Regex;
 
 pub fn ls(args: Vec<String>) -> String {
     let show_all = args.iter().any(|arg| arg == "-a");
     let long_format = args.iter().any(|arg| arg == "-l");
 
-    let vfs = VFS.lock().unwrap();
+    let vfs = get_vfs().lock().unwrap();
     let mut files = vfs.list_files();
     files.sort();
 
@@ -35,7 +35,7 @@ pub fn grep(pattern: &str, path: &str) -> String {
         Err(e) => return format!("Invalid regex: {}", e),
     };
 
-    let vfs = VFS.lock().unwrap();
+    let vfs = get_vfs().lock().unwrap();
     let chunk_size = 1024 * 64; // 64KB
     let mut offset = 0;
     let mut matched_lines = Vec::new();
@@ -84,7 +84,7 @@ pub fn find(path: &str, pattern: &str) -> String {
         Err(e) => return format!("Invalid regex: {}", e),
     };
 
-    let vfs = VFS.lock().unwrap();
+    let vfs = get_vfs().lock().unwrap();
     let files = vfs.list_files();
     let mut matches = Vec::new();
 
@@ -101,9 +101,6 @@ pub fn find(path: &str, pattern: &str) -> String {
     }
 }
 
-pub fn xargs(cmd: &str, input: &str) -> String {
-    // This is problematic because execute_command is now async
-    // and we are in a sync function.
-    // For now, we'll just return an error or keep it for memory files only.
+pub fn xargs(_cmd: &str, _input: &str) -> String {
     format!("xargs is currently limited in this environment")
 }
