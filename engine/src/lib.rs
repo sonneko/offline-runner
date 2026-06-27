@@ -38,14 +38,17 @@ pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<String, JsV
     match cmd {
         "grep" | "read" => {
             if let Some(path) = args.get(1) {
-                let mut vfs = vfs::get_vfs().lock().unwrap();
-                vfs.ensure_handle(path, false).await?;
+                vfs::Vfs::ensure_handle_static(path, false).await?;
             }
         }
-        "write" | "touch" | "rm" | "stat" => {
+        "write" | "touch" => {
             if let Some(path) = args.get(0) {
-                let mut vfs = vfs::get_vfs().lock().unwrap();
-                vfs.ensure_handle(path, true).await?;
+                vfs::Vfs::ensure_handle_static(path, true).await?;
+            }
+        }
+        "rm" | "stat" => {
+            if let Some(path) = args.get(0) {
+                vfs::Vfs::ensure_handle_static(path, false).await?;
             }
         }
         _ => {}
@@ -105,13 +108,19 @@ pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<String, JsV
         },
         "rm" => {
             if args.len() >= 1 {
-                let mut vfs = vfs::get_vfs().lock().unwrap();
-                match vfs.unlink(&args[0]).await {
+                match vfs::Vfs::unlink_static(&args[0]).await {
                     Ok(_) => format!("Removed: {}", args[0]),
                     Err(e) => format!("rm Error: {:?}", e),
                 }
             } else {
                 "rm requires path".to_string()
+            }
+        },
+        "stat" => {
+            if args.len() >= 1 {
+                commands::stat(&args[0])
+            } else {
+                "stat requires path".to_string()
             }
         },
         _ => format!("Unknown command: {}", cmd),
@@ -148,9 +157,11 @@ pub async fn init_vfs() -> Result<(), JsValue> {
         wasm_bindgen_futures::JsFuture::from(root_promise).await?
     };
 
-    let mut vfs = vfs::get_vfs().lock().unwrap();
-    vfs.set_opfs_root(root.unchecked_into());
-    vfs.write_file_mem("welcome.txt", b"Welcome to iOS PWA Tool!".to_vec());
+    {
+        let mut vfs = vfs::get_vfs().lock().unwrap();
+        vfs.set_opfs_root(root.unchecked_into());
+        vfs.write_file_mem("welcome.txt", b"Welcome to iOS PWA Tool!".to_vec());
+    }
     Ok(())
     }
 }

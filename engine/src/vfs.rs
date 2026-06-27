@@ -97,6 +97,46 @@ impl Vfs {
         { Ok(()) }
     }
 
+    pub async fn ensure_handle_static(path: &str, create: bool) -> Result<(), JsValue> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let path = Self::normalize_path(path);
+            let root = {
+                let vfs = get_vfs().lock().unwrap();
+                if !vfs.is_opfs_path(&path) {
+                    return Ok(());
+                }
+                vfs.opfs_root.clone().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?
+            };
+
+            let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
+            let mut current_dir = root;
+
+            for i in 0..components.len()-1 {
+                let options = web_sys::FileSystemGetDirectoryOptions::new();
+                options.set_create(create);
+                let next_dir_promise = current_dir.get_directory_handle_with_options(components[i], &options);
+                current_dir = JsFuture::from(next_dir_promise).await?.unchecked_into();
+            }
+
+            let options = FileSystemGetFileOptions::new();
+            options.set_create(create);
+            let _file_handle_promise = current_dir.get_file_handle_with_options(fileName, &options);
+            let _file_handle: FileSystemFileHandle = JsFuture::from(_file_handle_promise).await?.unchecked_into();
+
+            {
+                let mut vfs = get_vfs().lock().unwrap();
+                if !vfs.opfs_files.contains(&path.to_string()) {
+                    vfs.opfs_files.push(path.to_string());
+                }
+            }
+            Ok(())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        { Ok(()) }
+    }
+
     pub async fn ensure_handle(&mut self, path: &str, _create: bool) -> Result<(), JsValue> {
         #[cfg(target_arch = "wasm32")]
         {
@@ -105,7 +145,7 @@ impl Vfs {
                 return Ok(());
             }
 
-            let root = self.opfs_root.as_ref().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
+            let root = self.opfs_root.clone().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
             let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
             let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
             let mut current_dir = root.clone();
@@ -226,6 +266,46 @@ impl Vfs {
         files
     }
 
+    pub async fn unlink_static(path: &str) -> Result<(), JsValue> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let path = Self::normalize_path(path);
+            let root = {
+                let mut vfs = get_vfs().lock().unwrap();
+                if !vfs.is_opfs_path(&path) {
+                    vfs.memory_files.remove(&path);
+                    return Ok(());
+                }
+                vfs.opfs_root.clone().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?
+            };
+
+            let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
+            let mut current_dir = root;
+
+            for i in 0..components.len()-1 {
+                let next_dir_promise = current_dir.get_directory_handle_with_options(components[i], &web_sys::FileSystemGetDirectoryOptions::new());
+                current_dir = JsFuture::from(next_dir_promise).await?.unchecked_into();
+            }
+
+            let result = current_dir.remove_entry(fileName);
+            JsFuture::from(result).await?;
+
+            {
+                let mut vfs = get_vfs().lock().unwrap();
+                vfs.opfs_files.retain(|f| f != &path);
+            }
+            Ok(())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = Self::normalize_path(path);
+            let mut vfs = get_vfs().lock().unwrap();
+            vfs.memory_files.remove(&path);
+            Ok(())
+        }
+    }
+
     pub async fn unlink(&mut self, path: &str) -> Result<(), JsValue> {
         let path = Self::normalize_path(path);
         if !self.is_opfs_path(&path) {
@@ -235,7 +315,7 @@ impl Vfs {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let root = self.opfs_root.as_ref().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
+            let root = self.opfs_root.clone().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
             let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
             let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
             let mut current_dir = root.clone();

@@ -104,3 +104,17 @@ pub fn find(path: &str, pattern: &str) -> String {
 pub fn xargs(_cmd: &str, _input: &str) -> String {
     format!("xargs is currently limited in this environment")
 }
+
+pub fn stat(path: &str) -> String {
+    let vfs = get_vfs().lock().unwrap();
+    let path = crate::vfs::Vfs::normalize_path(path);
+    if vfs.is_opfs_path(&path) {
+        // We'd need to actually stat the file in OPFS, but for now:
+        format!("File: {}\nType: OPFS", path)
+    } else {
+        match vfs.read_file_sync(&path, 0, 0) {
+            Ok(_) => format!("File: {}\nType: Memory", path),
+            Err(_) => format!("stat: {}: No such file", path),
+        }
+    }
+}
