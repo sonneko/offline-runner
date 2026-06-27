@@ -34,7 +34,32 @@ pub fn setup_panic_hook() {
 
 #[wasm_bindgen]
 pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
-    let args = commands::parse_args(cmd_line);
+    let pipes: Vec<&str> = cmd_line.split('|').collect();
+    let mut current_input = String::new();
+    let mut final_output = String::new();
+
+    for (i, pipe) in pipes.iter().enumerate() {
+        let trimmed = pipe.trim();
+        let mut args = commands::parse_args(trimmed);
+
+        // If there's input from previous command, append it to args or handle it
+        if !current_input.is_empty() {
+            args.push(current_input.clone());
+        }
+
+        if args.is_empty() { continue; }
+
+        let res = execute_single_command(&args).await?;
+        current_input = res.clone();
+        if i == pipes.len() - 1 {
+            final_output = res;
+        }
+    }
+
+    Ok(final_output)
+}
+
+async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
     if args.is_empty() {
         return Ok(String::new());
     }
