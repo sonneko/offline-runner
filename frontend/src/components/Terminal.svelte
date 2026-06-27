@@ -30,10 +30,7 @@
                 case '\r': // Enter
                     term.write('\r\n');
                     if (input.trim()) {
-                        const parts = input.trim().split(' ');
-                        const cmd = parts[0];
-                        const args = parts.slice(1);
-                        const result = await workerApi.executeCommand(cmd, args);
+                        const result = await workerApi.executeCommand(input.trim());
                         term.writeln(result);
                     }
                     input = '';

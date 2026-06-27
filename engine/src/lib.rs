@@ -33,54 +33,125 @@ pub fn setup_panic_hook() {
 }
 
 #[wasm_bindgen]
-pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<String, JsValue> {
-    // Ensure handles are opened before calling sync commands
-    match cmd {
-        "grep" | "read" => {
-            if let Some(path) = args.get(1) {
-                vfs::Vfs::ensure_handle_static(path, false).await?;
-            }
-        }
-        "write" | "touch" => {
-            if let Some(path) = args.get(0) {
-                vfs::Vfs::ensure_handle_static(path, true).await?;
-            }
-        }
-        "rm" | "stat" => {
-            if let Some(path) = args.get(0) {
-                vfs::Vfs::ensure_handle_static(path, false).await?;
-            }
-        }
-        _ => {}
+pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
+    let args = commands::parse_args(cmd_line);
+    if args.is_empty() {
+        return Ok(String::new());
     }
 
-    let res = match cmd {
-        "ls" => commands::ls(args),
+    let cmd = &args[0];
+    let cmd_args = args[1..].to_vec();
+
+    // Ensure handles are opened before calling sync commands
+    {
+        let vfs = vfs::get_vfs().lock().unwrap();
+        match cmd.as_str() {
+            "grep" => {
+                if let Some(path) = cmd_args.get(1) {
+                    let resolved = vfs.resolve_path(path);
+                    drop(vfs);
+                    vfs::Vfs::ensure_handle_static(&resolved, false).await?;
+                }
+            }
+            "write" | "touch" => {
+                if let Some(path) = cmd_args.get(0) {
+                    let resolved = vfs.resolve_path(path);
+                    drop(vfs);
+                    vfs::Vfs::ensure_handle_static(&resolved, true).await?;
+                }
+            }
+            "rm" | "stat" | "cat" | "head" | "tail" => {
+                let paths: Vec<String> = cmd_args.iter()
+                    .filter(|p| !p.starts_with('-'))
+                    .map(|p| vfs.resolve_path(p))
+                    .collect();
+                drop(vfs);
+                for resolved in paths {
+                    vfs::Vfs::ensure_handle_static(&resolved, false).await?;
+                }
+            }
+            "echo" => {
+                if let Some(idx) = cmd_args.iter().position(|r| r == ">") {
+                    if let Some(path) = cmd_args.get(idx + 1) {
+                        let resolved = vfs.resolve_path(path);
+                        drop(vfs);
+                        vfs::Vfs::ensure_handle_static(&resolved, true).await?;
+                    }
+                }
+            }
+            "cp" | "mv" => {
+                if cmd_args.len() >= 2 {
+                    let src = vfs.resolve_path(&cmd_args[0]);
+                    let dest = vfs.resolve_path(&cmd_args[1]);
+                    drop(vfs);
+                    vfs::Vfs::ensure_handle_static(&src, false).await?;
+                    vfs::Vfs::ensure_handle_static(&dest, true).await?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let res = match cmd.as_str() {
+        "ls" => commands::ls(cmd_args),
+        "pwd" => commands::pwd(),
+        "cd" => {
+            if let Some(path) = cmd_args.get(0) {
+                commands::cd(path)
+            } else {
+                commands::cd("/")
+            }
+        },
+        "cat" => commands::cat(cmd_args),
+        "head" => commands::head(cmd_args),
+        "tail" => commands::tail(cmd_args),
+        "echo" => commands::echo(cmd_args),
         "grep" => {
-            if args.len() >= 2 {
-                commands::grep(&args[0], &args[1])
+            if cmd_args.len() >= 2 {
+                let vfs = vfs::get_vfs().lock().unwrap();
+                let resolved = vfs.resolve_path(&cmd_args[1]);
+                drop(vfs);
+                commands::grep(&cmd_args[0], &resolved)
             } else {
                 "grep requires pattern and path".to_string()
             }
         },
         "find" => {
-            if args.len() >= 2 {
-                commands::find(&args[0], &args[1])
+            if cmd_args.len() >= 2 {
+                let vfs = vfs::get_vfs().lock().unwrap();
+                let resolved = vfs.resolve_path(&cmd_args[0]);
+                drop(vfs);
+                commands::find(&resolved, &cmd_args[1])
             } else {
                 "find requires path and pattern".to_string()
             }
         },
         "xargs" => {
-            if args.len() >= 2 {
-                commands::xargs(&args[0], &args[1])
+            if cmd_args.len() >= 2 {
+                commands::xargs(&cmd_args[0], &cmd_args[1])
             } else {
                 "xargs requires command and input".to_string()
             }
         },
+        "cp" => {
+            if cmd_args.len() >= 2 {
+                commands::cp(&cmd_args[0], &cmd_args[1])
+            } else {
+                "cp requires src and dest".to_string()
+            }
+        },
+        "mv" => {
+            if cmd_args.len() >= 2 {
+                commands::mv(&cmd_args[0], &cmd_args[1]).await
+            } else {
+                "mv requires src and dest".to_string()
+            }
+        },
         "write" => {
-            if args.len() >= 2 {
+            if cmd_args.len() >= 2 {
                 let mut vfs = vfs::get_vfs().lock().unwrap();
-                match vfs.write_file_sync(&args[0], args[1].as_bytes(), 0) {
+                let resolved = vfs.resolve_path(&cmd_args[0]);
+                match vfs.write_file_sync(&resolved, cmd_args[1].as_bytes(), 0) {
                     Ok(n) => format!("Wrote {} bytes", n),
                     Err(e) => format!("Write Error: {:?}", e),
                 }
@@ -89,10 +160,12 @@ pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<String, JsV
             }
         },
         "mkdir" => {
-            if args.len() >= 1 {
-                let mut vfs = vfs::get_vfs().lock().unwrap();
-                match vfs.mkdir_p(&args[0]).await {
-                    Ok(_) => format!("Directory created: {}", args[0]),
+            if cmd_args.len() >= 1 {
+                let vfs_lock = vfs::get_vfs().lock().unwrap();
+                let resolved = vfs_lock.resolve_path(&cmd_args[0]);
+                drop(vfs_lock);
+                match vfs::Vfs::mkdir_p(&resolved).await {
+                    Ok(_) => format!("Directory created: {}", resolved),
                     Err(e) => format!("mkdir Error: {:?}", e),
                 }
             } else {
@@ -100,25 +173,16 @@ pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<String, JsV
             }
         },
         "touch" => {
-            if args.len() >= 1 {
-                format!("File touched: {}", args[0])
+            if cmd_args.len() >= 1 {
+                format!("File touched: {}", cmd_args[0])
             } else {
                 "touch requires path".to_string()
             }
         },
-        "rm" => {
-            if args.len() >= 1 {
-                match vfs::Vfs::unlink_static(&args[0]).await {
-                    Ok(_) => format!("Removed: {}", args[0]),
-                    Err(e) => format!("rm Error: {:?}", e),
-                }
-            } else {
-                "rm requires path".to_string()
-            }
-        },
+        "rm" => commands::rm(cmd_args).await,
         "stat" => {
-            if args.len() >= 1 {
-                commands::stat(&args[0])
+            if cmd_args.len() >= 1 {
+                commands::stat(&cmd_args[0])
             } else {
                 "stat requires path".to_string()
             }
@@ -171,4 +235,5 @@ impl vfs::Vfs {
     pub fn set_opfs_root(&mut self, root: web_sys::FileSystemDirectoryHandle) {
         self.opfs_root = Some(root);
     }
+
 }
