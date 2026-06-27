@@ -8,10 +8,24 @@ const api = {
         return "Wasm Initialized";
     },
     async executeCommand(cmd: string, args: string[]) {
-        return execute_command(cmd, args);
+        try {
+            return await execute_command(cmd, args);
+        } catch (e) {
+            return `Error: ${e}`;
+        }
     },
     async runMss(code: string) {
         return run_mss(code);
+    },
+    async saveToCache(key: string, data: string) {
+        const path = `.cache/mermaid/${key}.svg`;
+        try {
+            // We can use the write command we'll add to execute_command
+            // Or use direct VFS access if exposed
+            return await execute_command("write", [path, data]);
+        } catch (e) {
+            return `Cache Error: ${e}`;
+        }
     }
 };
 

@@ -53,12 +53,43 @@
     });
 </script>
 
-<div bind:this={terminalElement} class="terminal-container"></div>
+<div class="terminal-wrapper">
+    <div bind:this={terminalElement} class="terminal-container"></div>
+    <div class="virtual-keys">
+        <button on:click={() => term.focus()}>Focus</button>
+        <button on:click={() => term.onData('\x1b')}>Esc</button>
+        <button on:click={() => term.onData('\t')}>Tab</button>
+        <button on:click={() => term.onData('\x03')}>Ctrl+C</button>
+    </div>
+</div>
 
 <style>
-    .terminal-container {
+    .terminal-wrapper {
+        display: flex;
+        flex-direction: column;
         height: 100%;
         width: 100%;
+    }
+    .terminal-container {
+        flex: 1;
+        width: 100%;
         background: #1e1e1e;
+    }
+    .virtual-keys {
+        height: 40px;
+        background: #252525;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        gap: 5px;
+        border-top: 1px solid #333;
+    }
+    .virtual-keys button {
+        background: #444;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
     }
 </style>
