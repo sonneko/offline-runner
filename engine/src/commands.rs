@@ -69,6 +69,22 @@ pub fn grep(pattern: &str, path: &str) -> String {
         Err(e) => return format!("Invalid regex: {}", e),
     };
 
+    // Check if path is actually input from a pipe
+    if !path.starts_with('/') && !path.contains('.') && !path.contains('/') {
+         // Treat as raw input string
+         let mut matched_lines = Vec::new();
+         for line in path.lines() {
+             if re.is_match(line) {
+                 matched_lines.push(line.to_string());
+             }
+         }
+         return if matched_lines.is_empty() {
+             "No matches found".to_string()
+         } else {
+             matched_lines.join("\n")
+         };
+    }
+
     let vfs = get_vfs().lock().unwrap();
     let chunk_size = 1024 * 64; // 64KB
     let mut offset = 0;

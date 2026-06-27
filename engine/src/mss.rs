@@ -40,6 +40,7 @@ enum Token {
 pub enum Expr {
     Literal(String),
     Variable(String),
+    BinaryOp(Box<Expr>, String, Box<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -61,8 +62,25 @@ fn parse_variable(input: &str) -> IResult<&str, Expr> {
     map(preceded(char('$'), parse_identifier), Expr::Variable).parse(input)
 }
 
-fn parse_expr(input: &str) -> IResult<&str, Expr> {
+fn parse_primary_expr(input: &str) -> IResult<&str, Expr> {
     alt((parse_literal, parse_variable)).parse(input)
+}
+
+fn parse_expr(input: &str) -> IResult<&str, Expr> {
+    let (input, left) = parse_primary_expr(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, op) = opt(alt((
+        tag("=="), tag("!="), tag("<="), tag(">="), tag("<"), tag(">"),
+        tag("+"), tag("-")
+    ))).parse(input)?;
+
+    if let Some(op_str) = op {
+        let (input, _) = multispace0(input)?;
+        let (input, right) = parse_expr(input)?;
+        Ok((input, Expr::BinaryOp(Box::new(left), op_str.to_string(), Box::new(right))))
+    } else {
+        Ok((input, left))
+    }
 }
 
 fn parse_block(input: &str) -> IResult<&str, Vec<Statement>> {
@@ -175,6 +193,28 @@ impl Interpreter {
         match expr {
             Expr::Literal(s) => Ok(s),
             Expr::Variable(name) => self.variables.get(&name).cloned().ok_or_else(|| format!("Undefined variable: ${}", name)),
+            Expr::BinaryOp(left, op, right) => {
+                let l_val = self.evaluate_expr(*left)?;
+                let r_val = self.evaluate_expr(*right)?;
+
+                match op.as_str() {
+                    "==" => Ok((l_val == r_val).to_string()),
+                    "!=" => Ok((l_val != r_val).to_string()),
+                    "+" => {
+                        if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<f64>(), r_val.parse::<f64>()) {
+                            Ok((l_num + r_num).to_string())
+                        } else {
+                            Ok(format!("{}{}", l_val, r_val))
+                        }
+                    }
+                    "-" => {
+                        let l_num: f64 = l_val.parse().map_err(|_| "Invalid number")?;
+                        let r_num: f64 = r_val.parse().map_err(|_| "Invalid number")?;
+                        Ok((l_num - r_num).to_string())
+                    }
+                    _ => Err(format!("Unsupported operator: {}", op)),
+                }
+            }
         }
     }
 }

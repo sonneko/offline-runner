@@ -55,6 +55,14 @@ mod tests {
     }
 
     #[test]
+    fn test_mss_expr() {
+        use crate::run_mss;
+        assert_eq!(run_mss("$a = \"foo\"\n$b = \"bar\"\nif $a == $a { @print \"yes\" }"), "[Executed @print]");
+        assert_eq!(run_mss("$a = \"1\"\n$b = \"2\"\n$c = $a + $b\nif $c == \"3\" { @print \"yes\" }"), "[Executed @print]");
+        assert_eq!(run_mss("$a = \"hello\"\n$b = \"world\"\n$c = $a + \" \" + $b\nif $c == \"hello world\" { @print \"yes\" }"), "[Executed @print]");
+    }
+
+    #[test]
     fn test_parse_args() {
         use crate::commands::parse_args;
         assert_eq!(parse_args("ls -l /tmp"), vec!["ls", "-l", "/tmp"]);
