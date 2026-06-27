@@ -49,8 +49,7 @@
 
   async function handleCommand(e: KeyboardEvent) {
       if (e.key === 'Enter' && workerApi) {
-          const parts = commandInput.trim().split(' ');
-          const result = await workerApi.executeCommand(parts[0], parts.slice(1));
+          const result = await workerApi.executeCommand(commandInput.trim());
           previewContent = result;
           previewType = 'text';
           showCommandPalette = false;
