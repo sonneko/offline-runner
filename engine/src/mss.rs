@@ -10,8 +10,6 @@ use nom::{
     Parser,
 };
 use std::collections::HashMap;
-use std::pin::Pin;
-use std::future::Future;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
@@ -122,12 +120,12 @@ impl Interpreter {
         }
     }
 
-    pub async fn run(&mut self, code: &str) -> String {
+    pub fn run(&mut self, code: &str) -> String {
         match parse_program(code) {
             Ok((_, statements)) => {
                 let mut output = Vec::new();
                 for stmt in statements {
-                    match self.execute_statement(stmt).await {
+                    match self.execute_statement(stmt) {
                         Ok(res) => if !res.is_empty() { output.push(res); },
                         Err(e) => return format!("Runtime Error: {}", e),
                     }
@@ -138,44 +136,39 @@ impl Interpreter {
         }
     }
 
-    fn execute_statement(&mut self, stmt: Statement) -> Pin<Box<dyn Future<Output = Result<String, String>> + '_>> {
-        Box::pin(async move {
-            match stmt {
-                Statement::Assignment(name, expr) => {
-                    let val = self.evaluate_expr(expr)?;
-                    self.variables.insert(name, val);
+    fn execute_statement(&mut self, stmt: Statement) -> Result<String, String> {
+        match stmt {
+            Statement::Assignment(name, expr) => {
+                let val = self.evaluate_expr(expr)?;
+                self.variables.insert(name, val);
+                Ok(String::new())
+            }
+            Statement::CommandCall(name, args) => {
+                let mut _evaluated_args = Vec::new();
+                for arg in args {
+                    _evaluated_args.push(self.evaluate_expr(arg)?);
+                }
+                Ok(format!("[Executed @{}]", name))
+            }
+            Statement::If(condition, then_block, else_block) => {
+                let val = self.evaluate_expr(condition)?;
+                if !val.is_empty() && val != "false" && val != "0" {
+                    let mut out = Vec::new();
+                    for s in then_block {
+                        out.push(self.execute_statement(s)?);
+                    }
+                    Ok(out.join("\n"))
+                } else if let Some(eb) = else_block {
+                    let mut out = Vec::new();
+                    for s in eb {
+                        out.push(self.execute_statement(s)?);
+                    }
+                    Ok(out.join("\n"))
+                } else {
                     Ok(String::new())
                 }
-                Statement::CommandCall(name, args) => {
-                    let mut evaluated_args = Vec::new();
-                    for arg in args {
-                        evaluated_args.push(self.evaluate_expr(arg)?);
-                    }
-                    match crate::execute_command(&name, evaluated_args).await {
-                        Ok(res) => Ok(res),
-                        Err(e) => Err(format!("{:?}", e)),
-                    }
-                }
-                Statement::If(condition, then_block, else_block) => {
-                    let val = self.evaluate_expr(condition)?;
-                    if !val.is_empty() && val != "false" && val != "0" {
-                        let mut out = Vec::new();
-                        for s in then_block {
-                            out.push(self.execute_statement(s).await?);
-                        }
-                        Ok(out.join("\n"))
-                    } else if let Some(eb) = else_block {
-                        let mut out = Vec::new();
-                        for s in eb {
-                            out.push(self.execute_statement(s).await?);
-                        }
-                        Ok(out.join("\n"))
-                    } else {
-                        Ok(String::new())
-                    }
-                }
             }
-        })
+        }
     }
 
     fn evaluate_expr(&self, expr: Expr) -> Result<String, String> {

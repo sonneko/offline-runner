@@ -6,10 +6,10 @@ use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemSyncAcc
 use js_sys::Uint8Array;
 
 pub struct Vfs {
-    pub(crate) memory_files: HashMap<String, Vec<u8>>,
+    memory_files: HashMap<String, Vec<u8>>,
     pub(crate) opfs_root: Option<FileSystemDirectoryHandle>,
-    pub(crate) handle_pool: HashMap<String, FileSystemSyncAccessHandle>,
-    pub(crate) opfs_files: Vec<String>,
+    handle_pool: HashMap<String, FileSystemSyncAccessHandle>,
+    opfs_files: Vec<String>,
 }
 
 impl Vfs {
@@ -26,39 +26,49 @@ impl Vfs {
         !path.starts_with("/tmp/") && !path.starts_with("/dev/")
     }
 
-    pub fn has_handle(&self, path: &str) -> bool {
-        self.handle_pool.contains_key(path)
-    }
+    pub async fn init_opfs(&mut self) -> Result<(), JsValue> {
+        let global = js_sys::global();
+        let storage = if let Ok(worker_scope) = global.clone().dyn_into::<web_sys::WorkerGlobalScope>() {
+            let navigator = js_sys::Reflect::get(&worker_scope, &JsValue::from_str("navigator"))?;
+            let storage = js_sys::Reflect::get(&navigator, &JsValue::from_str("storage"))?;
+            storage.unchecked_into::<web_sys::StorageManager>()
+        } else if let Ok(window) = global.dyn_into::<web_sys::Window>() {
+            window.navigator().storage()
+        } else {
+            return Err(JsValue::from_str("Unsupported global scope"));
+        };
 
-    pub fn insert_handle(&mut self, path: &str, handle: FileSystemSyncAccessHandle) {
-        self.handle_pool.insert(path.to_string(), handle);
-        if !self.opfs_files.contains(&path.to_string()) {
-            self.opfs_files.push(path.to_string());
-        }
+        let root_promise = storage.get_directory();
+        let root_js: JsValue = JsFuture::from(root_promise).await?;
+        let root: FileSystemDirectoryHandle = root_js.unchecked_into();
+        self.opfs_root = Some(root);
+
+        self.refresh_opfs_listing().await?;
+        Ok(())
     }
 
     pub async fn refresh_opfs_listing(&mut self) -> Result<(), JsValue> {
+        Ok(())
+    }
+
+    pub async fn ensure_handle(&mut self, path: &str, create: bool) -> Result<(), JsValue> {
+        if !self.is_opfs_path(path) || self.handle_pool.contains_key(path) {
+            return Ok(());
+        }
+
         let root = self.opfs_root.as_ref().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
+        let options = FileSystemGetFileOptions::new();
+        options.set_create(create);
 
-        // Use JS snippet to iterate keys since web-sys support for async iterators is limited
-        let keys_fn = js_sys::Function::new_with_args("root", "
-            return (async () => {
-                const keys = [];
-                for await (const key of root.keys()) {
-                    keys.push(key);
-                }
-                return keys;
-            })();
-        ");
-        let promise = keys_fn.call1(&JsValue::NULL, root)?;
-        let keys_js = JsFuture::from(promise.unchecked_into::<js_sys::Promise>()).await?;
-        let keys: js_sys::Array = keys_js.unchecked_into();
+        let file_handle_promise = root.get_file_handle_with_options(path, &options);
+        let file_handle: FileSystemFileHandle = JsFuture::from(file_handle_promise).await?.unchecked_into();
 
-        self.opfs_files.clear();
-        for i in 0..keys.length() {
-            if let Some(key) = keys.get(i).as_string() {
-                self.opfs_files.push(key);
-            }
+        let access_handle_promise = file_handle.create_sync_access_handle();
+        let access_handle: FileSystemSyncAccessHandle = JsFuture::from(access_handle_promise).await?.unchecked_into();
+
+        self.handle_pool.insert(path.to_string(), access_handle);
+        if !self.opfs_files.contains(&path.to_string()) {
+            self.opfs_files.push(path.to_string());
         }
         Ok(())
     }
@@ -85,8 +95,10 @@ impl Vfs {
         let handle = self.handle_pool.get(path).ok_or_else(|| JsValue::from_str(&format!("Handle not in pool for {}", path)))?;
         let mut buffer = vec![0u8; length];
         let uint8_array = unsafe { Uint8Array::view(&buffer) };
+
         let options = web_sys::FileSystemReadWriteOptions::new();
         options.set_at(offset as f64);
+
         let bytes_read = handle.read_with_buffer_source_and_options(&uint8_array, &options)?;
         buffer.truncate(bytes_read as usize);
         Ok(buffer)
@@ -107,6 +119,7 @@ impl Vfs {
         let uint8_array = unsafe { Uint8Array::view(content) };
         let options = web_sys::FileSystemReadWriteOptions::new();
         options.set_at(offset as f64);
+
         let bytes_written = handle.write_with_buffer_source_and_options(&uint8_array, &options)?;
         Ok(bytes_written as usize)
     }

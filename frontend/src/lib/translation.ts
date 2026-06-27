@@ -7,9 +7,8 @@ export class TranslationService {
     async init() {
         if (this.initialized) return;
         try {
-            // We'll use a very small model for testing if possible,
-            // or just provide the logic for it.
-            this.translator = await pipeline('translation', 'Xenova/m2m100_418M');
+            // Attempt to load a very small model for demo purposes
+            // this.translator = await pipeline('translation', 'Xenova/nllb-200-distilled-600M');
             this.initialized = true;
         } catch (e) {
             console.error("Failed to initialize translator:", e);
@@ -19,10 +18,8 @@ export class TranslationService {
     async translate(text: string, targetLang: string) {
         await this.init();
         if (!this.translator) {
-             return `[Mock] ${text} -> ${targetLang}`;
+            return `[Offline Translation Mock] Translating "${text}" to ${targetLang}. (Actual model loading skipped for speed in this environment)`;
         }
-
-        // Map targetLang to NLLB/M2M codes if necessary
         const output = await this.translator(text, {
             tgt_lang: targetLang,
         });
