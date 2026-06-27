@@ -1,11 +1,40 @@
 import * as Comlink from 'comlink';
-import init, { execute_command, run_mss, init_vfs } from '../../engine/pkg/engine.js';
+import init, { execute_command, run_mss, init_vfs, setup_panic_hook } from '../../engine/pkg/engine.js';
+
+const STATE_IDLE = 0;
+const STATE_REQ = 1;
+const STATE_DONE = 2;
+const STATE_ERR = 3;
+
+let sharedBuffer: SharedArrayBuffer;
+let sharedInt32: Int32Array;
+let dataBuffer: Uint8Array;
+let ioWorker: Worker;
 
 const api = {
     async init() {
         await init();
-        init_vfs();
-        return "Wasm Initialized";
+        setup_panic_hook();
+
+        // Initialize SharedArrayBuffer for sync I/O (1MB for data)
+        sharedBuffer = new SharedArrayBuffer(8 + 1024 * 1024);
+        sharedInt32 = new Int32Array(sharedBuffer);
+        dataBuffer = new Uint8Array(sharedBuffer, 8);
+
+        // Initialize I/O Worker
+        ioWorker = new Worker(new URL('./io-worker.ts', import.meta.url), { type: 'module' });
+
+        // Get OPFS root to pass to I/O worker
+        const root = await navigator.storage.getDirectory();
+        ioWorker.postMessage({ type: 'init', buffer: sharedBuffer, root }, [root as any]);
+
+        // Attach sync I/O functions to global for Wasm
+        (self as any).readSync = api.readSync;
+        (self as any).writeSync = api.writeSync;
+        (self as any).truncateSync = api.truncateSync;
+
+        await init_vfs();
+        return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmd: string, args: string[]) {
         try {
@@ -13,6 +42,77 @@ const api = {
         } catch (e) {
             return `Error: ${e}`;
         }
+    },
+    // Sync I/O call for Rust (to be called via JS bridge)
+    readSync(path: string, offset: number, length: number): Uint8Array {
+        const pathEncoded = new TextEncoder().encode(path);
+        dataBuffer.set(pathEncoded);
+
+        sharedInt32[1] = 0; // Op: Read
+        sharedInt32[2] = pathEncoded.length;
+        sharedInt32[3] = offset;
+        sharedInt32[4] = length;
+
+        Atomics.store(sharedInt32, 0, STATE_REQ);
+        Atomics.notify(sharedInt32, 0, 1);
+        Atomics.wait(sharedInt32, 0, STATE_REQ);
+
+        if (Atomics.load(sharedInt32, 0) === STATE_DONE) {
+            const bytesRead = sharedInt32[1];
+            const result = new Uint8Array(bytesRead);
+            result.set(dataBuffer.slice(0, bytesRead));
+            Atomics.store(sharedInt32, 0, STATE_IDLE);
+            return result;
+        }
+        Atomics.store(sharedInt32, 0, STATE_IDLE);
+        throw new Error("Sync Read Failed");
+    },
+    writeSync(path: string, content: Uint8Array, offset: number): number {
+        const pathEncoded = new TextEncoder().encode(path);
+
+        if (pathEncoded.length + content.length > dataBuffer.length) {
+            throw new Error("Data exceeds SharedArrayBuffer limit");
+        }
+
+        // Path followed by content in dataBuffer
+        dataBuffer.set(pathEncoded);
+        dataBuffer.set(content, pathEncoded.length);
+
+        sharedInt32[1] = 1; // Op: Write
+        sharedInt32[2] = pathEncoded.length;
+        sharedInt32[3] = offset;
+        sharedInt32[4] = content.length;
+
+        Atomics.store(sharedInt32, 0, STATE_REQ);
+        Atomics.notify(sharedInt32, 0, 1);
+        Atomics.wait(sharedInt32, 0, STATE_REQ);
+
+        if (Atomics.load(sharedInt32, 0) === STATE_DONE) {
+            const bytesWritten = sharedInt32[1];
+            Atomics.store(sharedInt32, 0, STATE_IDLE);
+            return bytesWritten;
+        }
+        Atomics.store(sharedInt32, 0, STATE_IDLE);
+        throw new Error("Sync Write Failed");
+    },
+    truncateSync(path: string, size: number): void {
+        const pathEncoded = new TextEncoder().encode(path);
+        dataBuffer.set(pathEncoded);
+
+        sharedInt32[1] = 2; // Op: Truncate
+        sharedInt32[2] = pathEncoded.length;
+        sharedInt32[3] = size;
+
+        Atomics.store(sharedInt32, 0, STATE_REQ);
+        Atomics.notify(sharedInt32, 0, 1);
+        Atomics.wait(sharedInt32, 0, STATE_REQ);
+
+        if (Atomics.load(sharedInt32, 0) === STATE_DONE) {
+            Atomics.store(sharedInt32, 0, STATE_IDLE);
+            return;
+        }
+        Atomics.store(sharedInt32, 0, STATE_IDLE);
+        throw new Error("Sync Truncate Failed");
     },
     async runMss(code: string) {
         return run_mss(code);
