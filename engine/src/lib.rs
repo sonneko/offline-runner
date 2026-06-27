@@ -60,7 +60,7 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
                     vfs::Vfs::ensure_handle_static(&resolved, true).await?;
                 }
             }
-            "rm" | "stat" | "cat" => {
+            "rm" | "stat" | "cat" | "head" | "tail" => {
                 let paths: Vec<String> = cmd_args.iter()
                     .filter(|p| !p.starts_with('-'))
                     .map(|p| vfs.resolve_path(p))
@@ -79,6 +79,15 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
                     }
                 }
             }
+            "cp" | "mv" => {
+                if cmd_args.len() >= 2 {
+                    let src = vfs.resolve_path(&cmd_args[0]);
+                    let dest = vfs.resolve_path(&cmd_args[1]);
+                    drop(vfs);
+                    vfs::Vfs::ensure_handle_static(&src, false).await?;
+                    vfs::Vfs::ensure_handle_static(&dest, true).await?;
+                }
+            }
             _ => {}
         }
     }
@@ -94,6 +103,8 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
             }
         },
         "cat" => commands::cat(cmd_args),
+        "head" => commands::head(cmd_args),
+        "tail" => commands::tail(cmd_args),
         "echo" => commands::echo(cmd_args),
         "grep" => {
             if cmd_args.len() >= 2 {
@@ -120,6 +131,20 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
                 commands::xargs(&cmd_args[0], &cmd_args[1])
             } else {
                 "xargs requires command and input".to_string()
+            }
+        },
+        "cp" => {
+            if cmd_args.len() >= 2 {
+                commands::cp(&cmd_args[0], &cmd_args[1])
+            } else {
+                "cp requires src and dest".to_string()
+            }
+        },
+        "mv" => {
+            if cmd_args.len() >= 2 {
+                commands::mv(&cmd_args[0], &cmd_args[1]).await
+            } else {
+                "mv requires src and dest".to_string()
             }
         },
         "write" => {
@@ -154,19 +179,7 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
                 "touch requires path".to_string()
             }
         },
-        "rm" => {
-            if cmd_args.len() >= 1 {
-                let vfs = vfs::get_vfs().lock().unwrap();
-                let resolved = vfs.resolve_path(&cmd_args[0]);
-                drop(vfs);
-                match vfs::Vfs::unlink_static(&resolved).await {
-                    Ok(_) => format!("Removed: {}", resolved),
-                    Err(e) => format!("rm Error: {:?}", e),
-                }
-            } else {
-                "rm requires path".to_string()
-            }
-        },
+        "rm" => commands::rm(cmd_args).await,
         "stat" => {
             if cmd_args.len() >= 1 {
                 commands::stat(&cmd_args[0])
@@ -222,4 +235,5 @@ impl vfs::Vfs {
     pub fn set_opfs_root(&mut self, root: web_sys::FileSystemDirectoryHandle) {
         self.opfs_root = Some(root);
     }
+
 }

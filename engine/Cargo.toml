@@ -27,6 +27,7 @@ features = [
     "FileSystemGetDirectoryOptions",
     "FileSystemGetFileOptions",
     "FileSystemReadWriteOptions",
+    "FileSystemRemoveOptions",
     "StorageManager",
     "Navigator",
     "WorkerGlobalScope",

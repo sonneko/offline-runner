@@ -4,9 +4,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
 #[cfg(target_arch = "wasm32")]
-use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemSyncAccessHandle, FileSystemGetFileOptions};
-#[cfg(target_arch = "wasm32")]
-use js_sys::Uint8Array;
+use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetFileOptions};
 
 pub struct Vfs {
     memory_files: HashMap<String, Vec<u8>>,
@@ -71,6 +69,17 @@ impl Vfs {
 
     pub fn get_cwd(&self) -> &str {
         &self.cwd
+    }
+
+    pub fn get_file_size(&self, path: &str) -> u64 {
+        let path = Self::normalize_path(path);
+        if path == "/dev/null" { return 0; }
+        if path == "/dev/zero" || path == "/dev/random" { return u64::MAX; }
+
+        if !self.is_opfs_path(&path) {
+            return self.memory_files.get(&path).map(|v| v.len() as u64).unwrap_or(0);
+        }
+        0
     }
 
     pub fn set_cwd(&mut self, path: &str) {
@@ -148,7 +157,7 @@ impl Vfs {
             };
 
             let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
+            let file_name = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
             let mut current_dir = root;
 
             for i in 0..components.len()-1 {
@@ -160,7 +169,7 @@ impl Vfs {
 
             let options = FileSystemGetFileOptions::new();
             options.set_create(create);
-            let _file_handle_promise = current_dir.get_file_handle_with_options(fileName, &options);
+            let _file_handle_promise = current_dir.get_file_handle_with_options(file_name, &options);
             let _file_handle: FileSystemFileHandle = JsFuture::from(_file_handle_promise).await?.unchecked_into();
 
             {
@@ -182,6 +191,20 @@ impl Vfs {
 
     pub fn read_file_sync(&self, path: &str, offset: u64, length: usize) -> Result<Vec<u8>, JsValue> {
         let path = Self::normalize_path(path);
+        if path == "/dev/null" {
+            return Ok(Vec::new());
+        }
+        if path == "/dev/zero" {
+            return Ok(vec![0; length]);
+        }
+        if path == "/dev/random" {
+            let mut buf = vec![0; length];
+            for i in 0..length {
+                buf[i] = (offset.wrapping_add(i as u64) % 256) as u8; // Pseudo-random for now
+            }
+            return Ok(buf);
+        }
+
         if !self.is_opfs_path(&path) {
             let res = self.memory_files.get(&path)
                 .map(|v| {
@@ -216,6 +239,10 @@ impl Vfs {
 
     pub fn write_file_sync(&mut self, path: &str, content: &[u8], offset: u64) -> Result<usize, JsValue> {
         let path = Self::normalize_path(path);
+        if path.starts_with("/dev/") {
+            return Ok(content.len());
+        }
+
         if !self.is_opfs_path(&path) {
             let entry = self.memory_files.entry(path.to_string()).or_insert_with(Vec::new);
             let end = (offset as usize) + content.len();
@@ -271,7 +298,7 @@ impl Vfs {
         files
     }
 
-    pub async fn unlink_static(path: &str) -> Result<(), JsValue> {
+    pub async fn unlink_static(path: &str, recursive: bool) -> Result<(), JsValue> {
         #[cfg(target_arch = "wasm32")]
         {
             let path = Self::normalize_path(path);
@@ -285,7 +312,7 @@ impl Vfs {
             };
 
             let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
+            let file_name = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
             let mut current_dir = root;
 
             for i in 0..components.len()-1 {
@@ -293,12 +320,14 @@ impl Vfs {
                 current_dir = JsFuture::from(next_dir_promise).await?.unchecked_into();
             }
 
-            let result = current_dir.remove_entry(fileName);
+            let options = web_sys::FileSystemRemoveOptions::new();
+            options.set_recursive(recursive);
+            let result = current_dir.remove_entry_with_options(file_name, &options);
             JsFuture::from(result).await?;
 
             {
                 let mut vfs = get_vfs().lock().unwrap();
-                vfs.opfs_files.retain(|f| f != &path);
+                vfs.opfs_files.retain(|f| !f.starts_with(&path));
             }
             Ok(())
         }
@@ -322,7 +351,7 @@ impl Vfs {
         {
             let root = self.opfs_root.clone().ok_or_else(|| JsValue::from_str("OPFS not initialized"))?;
             let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let fileName = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
+            let file_name = components.last().ok_or_else(|| JsValue::from_str("Invalid path"))?;
             let mut current_dir = root.clone();
 
             for i in 0..components.len()-1 {
@@ -330,7 +359,7 @@ impl Vfs {
                 current_dir = JsFuture::from(next_dir_promise).await?.unchecked_into();
             }
 
-            let result = current_dir.remove_entry(fileName);
+            let result = current_dir.remove_entry(file_name);
             JsFuture::from(result).await?;
 
             self.opfs_files.retain(|f| f != &path);

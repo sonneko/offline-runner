@@ -142,12 +142,13 @@ pub fn xargs(_cmd: &str, _input: &str) -> String {
 pub fn stat(path: &str) -> String {
     let vfs = get_vfs().lock().unwrap();
     let path = vfs.resolve_path(path);
+    let size = vfs.get_file_size(&path);
+
     if vfs.is_opfs_path(&path) {
-        // We'd need to actually stat the file in OPFS, but for now:
-        format!("File: {}\nType: OPFS", path)
+        format!("File: {}\nSize: {}\nType: OPFS", path, size)
     } else {
         match vfs.read_file_sync(&path, 0, 0) {
-            Ok(_) => format!("File: {}\nType: Memory", path),
+            Ok(_) => format!("File: {}\nSize: {}\nType: Memory", path, size),
             Err(_) => format!("stat: {}: No such file", path),
         }
     }
@@ -233,5 +234,114 @@ pub fn echo(args: Vec<String>) -> String {
         }
     } else {
         args.join(" ")
+    }
+}
+
+pub fn head(args: Vec<String>) -> String {
+    let n = args.iter().position(|r| r == "-n")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
+
+    let path = args.last().unwrap_or(&"".to_string()).clone();
+    let vfs = get_vfs().lock().unwrap();
+    let resolved = vfs.resolve_path(&path);
+
+    match vfs.read_file_sync(&resolved, 0, 64 * 1024) {
+        Ok(content) => {
+            let text = String::from_utf8_lossy(&content);
+            let lines: Vec<&str> = text.lines().take(n).collect();
+            lines.join("\n")
+        }
+        Err(_) => format!("head: {}: No such file", path),
+    }
+}
+
+pub fn tail(args: Vec<String>) -> String {
+    let n = args.iter().position(|r| r == "-n")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
+
+    let path = args.last().unwrap_or(&"".to_string()).clone();
+    let vfs = get_vfs().lock().unwrap();
+    let resolved = vfs.resolve_path(&path);
+
+    match vfs.read_file_sync(&resolved, 0, 1024 * 1024) { // Read last 1MB
+        Ok(content) => {
+            let text = String::from_utf8_lossy(&content);
+            let lines: Vec<&str> = text.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            lines[start..].join("\n")
+        }
+        Err(_) => format!("tail: {}: No such file", path),
+    }
+}
+
+pub fn cp(src: &str, dest: &str) -> String {
+    let mut vfs = get_vfs().lock().unwrap();
+    let src_res = vfs.resolve_path(src);
+    let dest_res = vfs.resolve_path(dest);
+
+    let chunk_size = 64 * 1024;
+    let mut offset = 0;
+
+    loop {
+        match vfs.read_file_sync(&src_res, offset, chunk_size) {
+            Ok(content) if !content.is_empty() => {
+                if let Err(e) = vfs.write_file_sync(&dest_res, &content, offset) {
+                    return format!("cp: write error: {:?}", e);
+                }
+                offset += content.len() as u64;
+            }
+            Ok(_) => break,
+            Err(e) => return format!("cp: read error: {:?}", e),
+        }
+    }
+
+    // Ensure destination is truncated to the copied size if it was larger
+    let _ = vfs.truncate(&dest_res, offset);
+    String::new()
+}
+
+pub async fn mv(src: &str, dest: &str) -> String {
+    let res = cp(src, dest);
+    if res.is_empty() {
+        let vfs = get_vfs().lock().unwrap();
+        let src_res = vfs.resolve_path(src);
+        drop(vfs);
+        match crate::vfs::Vfs::unlink_static(&src_res, true).await {
+            Ok(_) => String::new(),
+            Err(e) => format!("mv: unlink error: {:?}", e),
+        }
+    } else {
+        res
+    }
+}
+
+pub async fn rm(args: Vec<String>) -> String {
+    let recursive = args.iter().any(|arg| arg == "-r");
+    let paths: Vec<String> = args.into_iter().filter(|arg| arg != "-r").collect();
+
+    if paths.is_empty() {
+        return "rm: missing operand".to_string();
+    }
+
+    let mut errors = Vec::new();
+    for path in paths {
+        let resolved = {
+            let vfs = get_vfs().lock().unwrap();
+            vfs.resolve_path(&path)
+        };
+        match crate::vfs::Vfs::unlink_static(&resolved, recursive).await {
+            Ok(_) => {},
+            Err(e) => errors.push(format!("rm: {}: {:?}", path, e)),
+        }
+    }
+
+    if errors.is_empty() {
+        String::new()
+    } else {
+        errors.join("\n")
     }
 }
