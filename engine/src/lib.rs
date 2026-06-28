@@ -7,6 +7,7 @@ mod tests;
 use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 use std::panic;
+use futures::future::LocalBoxFuture;
 
 #[wasm_bindgen]
 extern "C" {
@@ -212,15 +213,22 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
                 "stat requires path".to_string()
             }
         },
+        "print" => cmd_args.join(" "),
         _ => format!("Unknown command: {}", cmd),
     };
     Ok(res)
 }
 
 #[wasm_bindgen]
-pub fn run_mss(code: &str) -> String {
-    let mut interpreter = mss::Interpreter::new();
-    interpreter.run(code)
+pub async fn run_mss(code: &str) -> String {
+    let executor = |cmd_line: String| -> LocalBoxFuture<'static, Result<String, String>> {
+        Box::pin(async move {
+            execute_command(&cmd_line).await
+                .map_err(|e| format!("{:?}", e))
+        })
+    };
+    let mut interpreter = mss::Interpreter::new(executor);
+    interpreter.run(code).await
 }
 
 #[wasm_bindgen]
