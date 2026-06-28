@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::vfs::Vfs;
+    use futures::future::LocalBoxFuture;
 
     #[test]
     fn test_path_normalization() {
@@ -22,8 +23,8 @@ mod tests {
         assert_eq!(vfs.resolve_path("/tmp"), "/tmp");
     }
 
-    #[test]
-    fn test_commands() {
+    #[tokio::test]
+    async fn test_commands() {
         use crate::commands::{echo, pwd, cd, cat, head, tail, cp};
         use crate::vfs::get_vfs;
 
@@ -54,26 +55,42 @@ mod tests {
         assert!(stat("lines.txt").contains("Size: 9"));
     }
 
-    #[test]
+    async fn run_mss_test(code: &str) -> String {
+        use crate::execute_command;
+        let executor = |cmd_line: String| -> LocalBoxFuture<'static, Result<String, String>> {
+            Box::pin(async move {
+                execute_command(&cmd_line).await
+                    .map_err(|e| format!("{:?}", e))
+            })
+        };
+        let http_get = |_url: String| -> LocalBoxFuture<'static, Result<String, String>> {
+            Box::pin(async move { Ok("mock response".to_string()) })
+        };
+        let sleep = |_ms: u64| -> LocalBoxFuture<'static, ()> {
+            Box::pin(async move { })
+        };
+        let mut interpreter = crate::mss::Interpreter::new(executor, http_get, sleep);
+        interpreter.set_env("HOME", "/home/user");
+        interpreter.run(code).await
+    }
+
+    #[tokio::test]
     async fn test_mss_expr() {
-        use crate::run_mss;
-        assert_eq!(run_mss("$a = \"foo\"\n$b = \"bar\"\nif $a == $a { print(\"yes\") }").await, "yes");
-        assert_eq!(run_mss("$a = \"1\"\n$b = \"2\"\n$c = $a + $b\nif $c == \"3\" { print(\"yes\") }").await, "yes");
-        assert_eq!(run_mss("$a = \"hello\"\n$b = \"world\"\n$c = $a + \" \" + $b\nif $c == \"hello world\" { print(\"yes\") }").await, "yes");
+        assert_eq!(run_mss_test("$a = \"foo\"\n$b = \"bar\"\nif $a == $a { print(\"yes\") }").await, "yes");
+        assert_eq!(run_mss_test("$a = \"1\"\n$b = \"2\"\n$c = $a + $b\nif $c == \"3\" { print(\"yes\") }").await, "yes");
+        assert_eq!(run_mss_test("$a = \"hello\"\n$b = \"world\"\n$c = $a + \" \" + $b\nif $c == \"hello world\" { print(\"yes\") }").await, "yes");
     }
 
-    #[test]
+    #[tokio::test]
     async fn test_mss_builtins() {
-        use crate::run_mss;
-        assert_eq!(run_mss("print(\"hello\", \"world\")").await, "hello world");
-        assert_eq!(run_mss("len(\"abc\")").await, "3");
-        assert_eq!(run_mss("$a = \"10\"\n$b = \"2\"\nprint($a * $b)").await, "20");
-        assert_eq!(run_mss("$a = \"10\"\n$b = \"2\"\nprint($a / $b)").await, "5");
+        assert_eq!(run_mss_test("print(\"hello\", \"world\")").await, "hello world");
+        assert_eq!(run_mss_test("len(\"abc\")").await, "3");
+        assert_eq!(run_mss_test("$a = \"10\"\n$b = \"2\"\nprint($a * $b)").await, "20");
+        assert_eq!(run_mss_test("$a = \"10\"\n$b = \"2\"\nprint($a / $b)").await, "5");
     }
 
-    #[test]
+    #[tokio::test]
     async fn test_mss_loops() {
-        use crate::run_mss;
         let code = "
             $count = \"0\"
             while $count != \"3\" {
@@ -81,27 +98,55 @@ mod tests {
             }
             if $count == \"3\" { print(\"done\") }
         ";
-        assert_eq!(run_mss(code).await, "done");
+        assert_eq!(run_mss_test(code).await, "done");
 
         let code_for = "
             for $i in \"a b c\" {
                 print($i)
             }
         ";
-        let res = run_mss(code_for).await;
+        let res = run_mss_test(code_for).await;
         assert!(res.contains("a"));
         assert!(res.contains("b"));
         assert!(res.contains("c"));
     }
 
-    #[test]
+    #[tokio::test]
     async fn test_mss_command_sub() {
-        use crate::run_mss;
         let code = "
             $res = `echo \"hello\"`
             if $res == \"hello\" { print(\"yes\") }
         ";
-        assert_eq!(run_mss(code).await, "yes");
+        assert_eq!(run_mss_test(code).await, "yes");
+    }
+
+    #[tokio::test]
+    async fn test_mss_functions() {
+        let code = "
+            func add($x, $y) {
+                return $x + $y
+            }
+            $res = add(\"10\", \"20\")
+            print($res)
+        ";
+        assert_eq!(run_mss_test(code).await, "30");
+
+        let code_scope = "
+            $a = \"global\"
+            func test() {
+                $a = \"local\"
+                return $a
+            }
+            $res = test()
+            print($a, $res)
+        ";
+        assert_eq!(run_mss_test(code_scope).await, "global local");
+    }
+
+    #[tokio::test]
+    async fn test_mss_env_vars() {
+        let code = "print($HOME)";
+        assert_eq!(run_mss_test(code).await, "/home/user");
     }
 
     #[test]

@@ -10,6 +10,8 @@ use nom::{
     Parser,
 };
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use futures::future::LocalBoxFuture;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -31,7 +33,30 @@ pub enum Token {
     RBrace,
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
-    #[regex("\"[^\"]*\"", |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
+    #[regex("\"([^\"\\\\]|\\\\.)*\"", |lex| {
+        let s = lex.slice();
+        let mut result = String::with_capacity(s.len());
+        let mut chars = s[1..s.len()-1].chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    })]
     String(String),
     #[regex("`[^`]*`", |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Backtick(String),
@@ -43,6 +68,7 @@ pub enum Expr {
     Variable(String),
     BinaryOp(Box<Expr>, String, Box<Expr>),
     CommandSub(String),
+    Call(String, Vec<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +78,24 @@ pub enum Statement {
     While(Expr, Vec<Statement>),
     For(String, Expr, Vec<Statement>),
     CommandCall(String, Vec<Expr>),
-    BuiltinCall(String, Vec<Expr>),
+    FunctionDef(String, Vec<String>, Vec<Statement>),
+    Return(Expr),
+    Expression(Expr),
 }
 
 fn parse_identifier(input: &str) -> IResult<&str, String> {
-    map(recognize(pair(alt((alpha1, tag("_"))), many0(alt((alphanumeric1, tag("_")))))), |s: &str| s.to_string()).parse(input)
+    map(
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        )),
+        |s: &str| s.to_string(),
+    )
+    .parse(input)
+}
+
+fn parse_var_identifier(input: &str) -> IResult<&str, String> {
+    preceded(char('$'), parse_identifier).parse(input)
 }
 
 fn parse_literal(input: &str) -> IResult<&str, Expr> {
@@ -64,7 +103,7 @@ fn parse_literal(input: &str) -> IResult<&str, Expr> {
 }
 
 fn parse_variable(input: &str) -> IResult<&str, Expr> {
-    map(preceded(char('$'), parse_identifier), Expr::Variable).parse(input)
+    map(parse_var_identifier, Expr::Variable).parse(input)
 }
 
 fn parse_command_sub(input: &str) -> IResult<&str, Expr> {
@@ -75,8 +114,26 @@ fn parse_command_sub(input: &str) -> IResult<&str, Expr> {
     .parse(input)
 }
 
+fn parse_call_expr(input: &str) -> IResult<&str, Expr> {
+    let (input, name) = parse_identifier(input)?;
+    let (input, _) = char('(').parse(input)?;
+    let (input, args) = opt(pair(
+        parse_expr,
+        many0(preceded(delimited(multispace0, char(','), multispace0), parse_expr))
+    )).parse(input)?;
+    let (input, _) = char(')').parse(input)?;
+
+    let mut all_args = Vec::new();
+    if let Some((first, rest)) = args {
+        all_args.push(first);
+        all_args.extend(rest);
+    }
+
+    Ok((input, Expr::Call(name, all_args)))
+}
+
 fn parse_primary_expr(input: &str) -> IResult<&str, Expr> {
-    alt((parse_literal, parse_variable, parse_command_sub)).parse(input)
+    alt((parse_literal, parse_variable, parse_command_sub, parse_call_expr)).parse(input)
 }
 
 fn parse_expr(input: &str) -> IResult<&str, Expr> {
@@ -127,8 +184,7 @@ fn parse_while_stmt(input: &str) -> IResult<&str, Statement> {
 fn parse_for_stmt(input: &str) -> IResult<&str, Statement> {
     let (input, _) = tag("for").parse(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, _) = char('$')(input)?;
-    let (input, var_name) = parse_identifier(input)?;
+    let (input, var_name) = parse_var_identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("in").parse(input)?;
     let (input, _) = multispace0(input)?;
@@ -146,8 +202,7 @@ fn parse_command_call_stmt(input: &str) -> IResult<&str, Statement> {
 }
 
 fn parse_assignment(input: &str) -> IResult<&str, Statement> {
-    let (input, _) = char('$')(input)?;
-    let (input, name) = parse_identifier(input)?;
+    let (input, name) = parse_var_identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('=')(input)?;
     let (input, _) = multispace0(input)?;
@@ -155,16 +210,24 @@ fn parse_assignment(input: &str) -> IResult<&str, Statement> {
     Ok((input, Statement::Assignment(name, expr)))
 }
 
-fn parse_builtin_call(input: &str) -> IResult<&str, Statement> {
+fn parse_function_def(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = tag("func").parse(input)?;
+    let (input, _) = multispace0(input)?;
     let (input, name) = parse_identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('(').parse(input)?;
     let (input, args) = opt(pair(
-        parse_expr,
-        many0(preceded(delimited(multispace0, char(','), multispace0), parse_expr))
-    )).parse(input)?;
+        parse_var_identifier,
+        many0(preceded(
+            delimited(multispace0, char(','), multispace0),
+            parse_var_identifier,
+        )),
+    ))
+    .parse(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char(')').parse(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, body) = parse_block(input)?;
 
     let mut all_args = Vec::new();
     if let Some((first, rest)) = args {
@@ -172,7 +235,18 @@ fn parse_builtin_call(input: &str) -> IResult<&str, Statement> {
         all_args.extend(rest);
     }
 
-    Ok((input, Statement::BuiltinCall(name, all_args)))
+    Ok((input, Statement::FunctionDef(name, all_args, body)))
+}
+
+fn parse_return_stmt(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = tag("return").parse(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, expr) = parse_expr(input)?;
+    Ok((input, Statement::Return(expr)))
+}
+
+fn parse_expression_stmt(input: &str) -> IResult<&str, Statement> {
+    map(parse_expr, Statement::Expression).parse(input)
 }
 
 fn parse_statement(input: &str) -> IResult<&str, Statement> {
@@ -181,9 +255,11 @@ fn parse_statement(input: &str) -> IResult<&str, Statement> {
         parse_if_stmt,
         parse_while_stmt,
         parse_for_stmt,
+        parse_function_def,
+        parse_return_stmt,
         parse_assignment,
         parse_command_call_stmt,
-        parse_builtin_call,
+        parse_expression_stmt,
     ))
     .parse(input)
 }
@@ -192,28 +268,73 @@ fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
     many0(terminated(parse_statement, multispace0)).parse(input)
 }
 
-pub struct Interpreter<F>
-where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
-{
-    pub variables: HashMap<String, String>,
-    pub command_executor: F,
+#[derive(Clone)]
+pub struct Function {
+    params: Vec<String>,
+    body: Vec<Statement>,
 }
 
-impl<F> Interpreter<F>
-where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
+pub struct Interpreter<F, G, S>
+where
+    F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static,
+    G: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static,
+    S: Fn(u64) -> LocalBoxFuture<'static, ()> + 'static
 {
-    pub fn new(executor: F) -> Self {
+    pub variables: Vec<HashMap<String, String>>, // Stack of scopes
+    pub functions: HashMap<String, Function>,
+    pub command_executor: F,
+    pub http_get_fn: G,
+    pub sleep_fn: S,
+    pub cancel_flag: Arc<AtomicBool>,
+}
+
+impl<F, G, S> Interpreter<F, G, S>
+where
+    F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static,
+    G: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static,
+    S: Fn(u64) -> LocalBoxFuture<'static, ()> + 'static
+{
+    pub fn new(executor: F, http_get_fn: G, sleep_fn: S) -> Self {
         Self {
-            variables: HashMap::new(),
+            variables: vec![HashMap::new()],
+            functions: HashMap::new(),
             command_executor: executor,
+            http_get_fn,
+            sleep_fn,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn get_var(&self, name: &str) -> Option<String> {
+        for scope in self.variables.iter().rev() {
+            if let Some(val) = scope.get(name) {
+                return Some(val.clone());
+            }
+        }
+        None
+    }
+
+    fn set_var(&mut self, name: String, val: String) {
+        if let Some(scope) = self.variables.last_mut() {
+            scope.insert(name, val);
+        }
+    }
+
+    pub fn set_env(&mut self, name: &str, val: &str) {
+        if let Some(scope) = self.variables.first_mut() {
+            scope.insert(name.to_string(), val.to_string());
         }
     }
 
     pub async fn run(&mut self, code: &str) -> String {
+        self.cancel_flag.store(false, Ordering::SeqCst);
         match parse_program(code) {
             Ok((_, statements)) => {
                 let mut output = Vec::new();
                 for stmt in statements {
+                    if self.cancel_flag.load(Ordering::SeqCst) {
+                        return "Interrupted".to_string();
+                    }
                     match self.execute_statement(stmt).await {
                         Ok(res) => {
                             if !res.is_empty() {
@@ -234,7 +355,7 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
             match stmt {
                 Statement::Assignment(name, expr) => {
                     let val = self.evaluate_expr(expr).await?;
-                    self.variables.insert(name, val);
+                    self.set_var(name, val);
                     Ok(String::new())
                 }
                 Statement::CommandCall(name, args) => {
@@ -251,6 +372,9 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
                         let mut out = Vec::new();
                         for s in then_block {
                             let res = self.execute_statement(s).await?;
+                            if res.starts_with("__RETURN__:") {
+                                return Ok(res);
+                            }
                             if !res.is_empty() {
                                 out.push(res);
                             }
@@ -260,6 +384,9 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
                         let mut out = Vec::new();
                         for s in eb {
                             let res = self.execute_statement(s).await?;
+                            if res.starts_with("__RETURN__:") {
+                                return Ok(res);
+                            }
                             if !res.is_empty() {
                                 out.push(res);
                             }
@@ -277,6 +404,9 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
                     } {
                         for s in &body {
                             let res = self.execute_statement(s.clone()).await?;
+                            if res.starts_with("__RETURN__:") {
+                                return Ok(res);
+                            }
                             if !res.is_empty() {
                                 output.push(res);
                             }
@@ -289,9 +419,12 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
                     let items: Vec<&str> = list_val.split_whitespace().collect();
                     let mut output = Vec::new();
                     for item in items {
-                        self.variables.insert(var.clone(), item.to_string());
+                        self.set_var(var.clone(), item.to_string());
                         for s in &body {
                             let res = self.execute_statement(s.clone()).await?;
+                            if res.starts_with("__RETURN__:") {
+                                return Ok(res);
+                            }
                             if !res.is_empty() {
                                 output.push(res);
                             }
@@ -299,51 +432,80 @@ where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
                     }
                     Ok(output.join("\n"))
                 }
-                Statement::BuiltinCall(name, args) => {
+                Statement::FunctionDef(name, params, body) => {
+                    self.functions.insert(name, Function { params, body });
+                    Ok(String::new())
+                }
+                Statement::Return(expr) => {
+                    let val = self.evaluate_expr(expr).await?;
+                    Ok(format!("__RETURN__:{}", val))
+                }
+                Statement::Expression(expr) => {
+                    self.evaluate_expr(expr).await
+                }
+            }
+        })
+    }
+
+    pub fn evaluate_expr(&mut self, expr: Expr) -> LocalBoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            match expr {
+                Expr::Literal(s) => Ok(s),
+                Expr::Variable(name) => self.get_var(&name).ok_or_else(|| format!("Undefined variable: ${}", name)),
+                Expr::CommandSub(cmd) => {
+                    (self.command_executor)(cmd).await
+                }
+                Expr::Call(name, args) => {
                     let mut evaluated_args = Vec::new();
                     for arg in args {
                         evaluated_args.push(self.evaluate_expr(arg).await?);
                     }
+
+                    // Check if it's a user-defined function call
+                    if let Some(func) = self.functions.get(&name).cloned() {
+                        let mut new_scope = HashMap::new();
+                        for (i, param) in func.params.iter().enumerate() {
+                            let val = evaluated_args.get(i).cloned().unwrap_or_default();
+                            new_scope.insert(param.clone(), val);
+                        }
+                        self.variables.push(new_scope);
+
+                        let mut output: Vec<String> = Vec::new();
+                        let mut return_val = String::new();
+                        for s in func.body {
+                            let res = self.execute_statement(s).await?;
+                            if res.starts_with("__RETURN__:") {
+                                return_val = res["__RETURN__:".len()..].to_string();
+                                break;
+                            }
+                            if !res.is_empty() {
+                                output.push(res);
+                            }
+                        }
+                        self.variables.pop();
+                        return if !return_val.is_empty() { Ok(return_val) } else { Ok(output.join("\n")) };
+                    }
+
                     match name.as_str() {
                         "print" => Ok(evaluated_args.join(" ")),
                         "len" => Ok(evaluated_args.get(0).map(|s| s.len().to_string()).unwrap_or("0".to_string())),
                         "sleep" => {
                             if let Some(ms_str) = evaluated_args.get(0) {
                                 if let Ok(ms) = ms_str.parse::<u64>() {
-                                    // Async sleep on Wasm is usually handled by JS promises.
-                                    // For now, we will rely on a JS bridge or use wasm-bindgen-futures::JsFuture to wrap a setTimeout promise.
-                                    // Since we don't have a direct bridge here, we'll try to implement it if needed or leave as placeholder.
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                         // Placeholder for async sleep on Wasm
-                                    }
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    {
-                                        // Still use tokio for native tests if available, but we removed it.
-                                        // Let's just use std::thread::sleep for native tests (blocking is OK for tests).
-                                        std::thread::sleep(std::time::Duration::from_millis(ms));
-                                    }
+                                    (self.sleep_fn)(ms).await;
                                 }
                             }
                             Ok(String::new())
                         }
                         "http_get" => {
-                            Ok(format!("[Fetch content of {}]", evaluated_args.get(0).unwrap_or(&"".to_string())))
+                            if let Some(url) = evaluated_args.get(0) {
+                                (self.http_get_fn)(url.clone()).await
+                            } else {
+                                Err("http_get requires a URL".to_string())
+                            }
                         }
-                        _ => Err(format!("Unknown builtin: {}", name)),
+                        _ => Err(format!("Unknown call: {}", name)),
                     }
-                }
-            }
-        })
-    }
-
-    pub fn evaluate_expr(&self, expr: Expr) -> LocalBoxFuture<'_, Result<String, String>> {
-        Box::pin(async move {
-            match expr {
-                Expr::Literal(s) => Ok(s),
-                Expr::Variable(name) => self.variables.get(&name).cloned().ok_or_else(|| format!("Undefined variable: ${}", name)),
-                Expr::CommandSub(cmd) => {
-                    (self.command_executor)(cmd).await
                 }
                 Expr::BinaryOp(left, op, right) => {
                     let l_val = self.evaluate_expr(*left).await?;

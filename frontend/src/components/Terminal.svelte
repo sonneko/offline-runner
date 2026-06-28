@@ -152,7 +152,7 @@
         <button on:click={() => term.focus()}>Focus</button>
         <button on:click={() => term.onData('\x1b')}>Esc</button>
         <button on:click={() => term.onData('\t')}>Tab</button>
-        <button on:click={() => term.onData('\x03')}>Ctrl+C</button>
+        <button on:click={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }}>Ctrl+C</button>
     </div>
 </div>
 
