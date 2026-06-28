@@ -10,7 +10,7 @@
 - [ ] Worker内でのWasmメモリ割り当て上限の監視ロジック
 - [ ] Loggerの実装（RustのログをJSのコンソール/UIへ転送）
 - [ ] 実行タイムアウト管理（無限ループするスクリプトの強制終了機能）
-- [ ] Worker内での StorageManager の権限チェック
+- [x] Worker内での StorageManager の権限チェック
 - [ ] Wasmバイナリの Response.arrayBuffer() からのストリーミングコンパイル実装
 - [x] Rustの lazy_static を OnceCell (std) に置き換え（モダン化）
 

@@ -24,6 +24,17 @@ const api = {
         // Initialize I/O Worker
         ioWorker = new Worker(new URL('./io-worker.ts', import.meta.url), { type: 'module' });
 
+        // Check storage persist permission
+        if (navigator.storage && navigator.storage.persist) {
+            const isPersisted = await navigator.storage.persisted();
+            if (!isPersisted) {
+                const granted = await navigator.storage.persist();
+                console.log(`Storage persist granted: ${granted}`);
+            } else {
+                console.log('Storage is already persisted.');
+            }
+        }
+
         // Get OPFS root to pass to I/O worker
         const root = await navigator.storage.getDirectory();
         ioWorker.postMessage({ type: 'init', buffer: sharedBuffer, root }, [root as any]);
