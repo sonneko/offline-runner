@@ -12,16 +12,22 @@ pub struct Vfs {
     pub(crate) opfs_root: Option<FileSystemDirectoryHandle>,
     opfs_files: Vec<String>,
     cwd: String,
+    pub env_vars: HashMap<String, String>,
 }
 
 impl Vfs {
     pub fn new() -> Self {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("HOME".to_string(), "/".to_string());
+        env_vars.insert("PATH".to_string(), "/bin".to_string());
+
         Self {
             memory_files: HashMap::new(),
             #[cfg(target_arch = "wasm32")]
             opfs_root: None,
             opfs_files: Vec::new(),
             cwd: "/".to_string(),
+            env_vars,
         }
     }
 

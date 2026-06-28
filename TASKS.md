@@ -50,12 +50,12 @@
 
 ## D. MSS (Mini-ShellScript) 言語拡張 (15タスク)
 - [x] Lexer: 比較演算子 (==, !=, <, >) の追加
-- [ ] Parser: for ... in ... ループ文の追加
-- [ ] Parser: while ループ文の追加
+- [x] Parser: for ... in ... ループ文の追加
+- [x] Parser: while ループ文の追加
 - [ ] AST: 関数定義ノードの追加
 - [ ] Interpreter: 関数呼び出しと引数スタックの実装
 - [ ] Interpreter: ローカル変数のスコープ管理の実装
-- [ ] Interpreter: バッククォート (`cmd`) によるコマンド置換の実装
+- [x] Interpreter: バッククォート (`cmd`) によるコマンド置換の実装
 - [x] Interpreter: 数値演算 (+, -, *, /) のサポート
 - [x] Interpreter: 文字列結合演算の実装
 - [ ] 組み込み関数: sleep(ms) の非同期エミュレーション
