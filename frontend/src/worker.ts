@@ -33,6 +33,20 @@ const api = {
         (self as any).writeSync = api.writeSync;
         (self as any).truncateSync = api.truncateSync;
 
+        // Implement httpGet and sleep for Wasm
+        (self as any).httpGet = async (url: string) => {
+            try {
+                const res = await fetch(url);
+                return await res.text();
+            } catch (e) {
+                return `Fetch Error: ${e}`;
+            }
+        };
+
+        (self as any).sleep = async (ms: number) => {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        };
+
         await init_vfs();
         return "Wasm Initialized with Sync I/O";
     },
@@ -116,6 +130,11 @@ const api = {
     },
     async runMss(code: string) {
         return run_mss(code);
+    },
+    async interrupt() {
+        // We'll need to import 'interrupt' from engine
+        const { interrupt } = await import('../../engine/pkg/engine.js');
+        interrupt();
     },
     async saveToCache(key: string, data: string) {
         const path = `.cache/mermaid/${key}.svg`;

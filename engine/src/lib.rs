@@ -7,6 +7,7 @@ mod tests;
 use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 use std::panic;
+use std::sync::Arc;
 use futures::future::LocalBoxFuture;
 
 #[wasm_bindgen]
@@ -22,6 +23,12 @@ extern "C" {
 
     #[wasm_bindgen(js_name = truncateSync)]
     fn js_truncate_sync(path: &str, size: f64);
+
+    #[wasm_bindgen(js_name = httpGet)]
+    async fn js_http_get(url: &str) -> JsValue;
+
+    #[wasm_bindgen(js_name = sleep)]
+    async fn js_sleep(ms: f64);
 }
 
 #[wasm_bindgen]
@@ -60,7 +67,7 @@ pub async fn execute_command(cmd_line: &str) -> Result<String, JsValue> {
     Ok(final_output)
 }
 
-async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
+pub async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
     if args.is_empty() {
         return Ok(String::new());
     }
@@ -227,8 +234,58 @@ pub async fn run_mss(code: &str) -> String {
                 .map_err(|e| format!("{:?}", e))
         })
     };
-    let mut interpreter = mss::Interpreter::new(executor);
+    let mss_executor = |cmd_line: String| -> LocalBoxFuture<'static, Result<String, String>> {
+        Box::pin(async move {
+            execute_command(&cmd_line).await
+                .map_err(|e| format!("{:?}", e))
+        })
+    };
+
+    let http_get_fn = |url: String| -> LocalBoxFuture<'static, Result<String, String>> {
+        Box::pin(async move {
+            let res = js_http_get(&url).await;
+            res.as_string().ok_or_else(|| "Failed to get response as string".to_string())
+        })
+    };
+
+    let sleep_fn = |ms: u64| -> LocalBoxFuture<'static, ()> {
+        Box::pin(async move {
+            js_sleep(ms as f64).await;
+        })
+    };
+
+    let mut interpreter = mss::Interpreter::new(mss_executor, http_get_fn, sleep_fn);
+
+
+    interpreter.set_env("HOME", "/home/user");
+    interpreter.set_env("PATH", "/bin:/usr/bin");
+
+    // Static cancel flag for interrupt signal
+    if INTERRUPT_FLAG.load(Ordering::SeqCst) {
+        INTERRUPT_FLAG.store(false, Ordering::SeqCst);
+        return "Interrupted".to_string();
+    }
+    interpreter.cancel_flag = INTERRUPT_PTR.with(|ptr: &Arc<AtomicBool>| ptr.clone());
+
     interpreter.run(code).await
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+static INTERRUPT_FLAG: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    static INTERRUPT_PTR: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+}
+
+#[wasm_bindgen]
+pub fn interrupt() {
+    INTERRUPT_FLAG.store(true, Ordering::SeqCst);
+    INTERRUPT_PTR.with(|ptr: &Arc<AtomicBool>| ptr.store(true, Ordering::SeqCst));
+}
+
+#[wasm_bindgen]
+pub fn clear_interrupt() {
+    INTERRUPT_FLAG.store(false, Ordering::SeqCst);
 }
 
 #[wasm_bindgen]
