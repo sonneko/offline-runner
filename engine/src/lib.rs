@@ -21,6 +21,12 @@ extern "C" {
 
     #[wasm_bindgen(js_name = truncateSync)]
     fn js_truncate_sync(path: &str, size: f64);
+
+    #[wasm_bindgen(js_name = httpGet)]
+    async fn js_http_get(url: &str) -> JsValue;
+
+    #[wasm_bindgen(js_name = sleep)]
+    async fn js_sleep(ms: f64);
 }
 
 #[wasm_bindgen]
@@ -68,53 +74,44 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
     let cmd_args = args[1..].to_vec();
 
     // Ensure handles are opened before calling sync commands
+    let mut actions = Vec::new();
     {
         let vfs = vfs::get_vfs().lock().unwrap();
         match cmd.as_str() {
             "grep" => {
                 if let Some(path) = cmd_args.get(1) {
-                    let resolved = vfs.resolve_path(path);
-                    drop(vfs);
-                    vfs::Vfs::ensure_handle_static(&resolved, false).await?;
+                    actions.push((vfs.resolve_path(path), false));
                 }
             }
             "write" | "touch" => {
                 if let Some(path) = cmd_args.get(0) {
-                    let resolved = vfs.resolve_path(path);
-                    drop(vfs);
-                    vfs::Vfs::ensure_handle_static(&resolved, true).await?;
+                    actions.push((vfs.resolve_path(path), true));
                 }
             }
             "rm" | "stat" | "cat" | "head" | "tail" => {
-                let paths: Vec<String> = cmd_args.iter()
-                    .filter(|p| !p.starts_with('-'))
-                    .map(|p| vfs.resolve_path(p))
-                    .collect();
-                drop(vfs);
-                for resolved in paths {
-                    vfs::Vfs::ensure_handle_static(&resolved, false).await?;
+                for path in cmd_args.iter().filter(|p| !p.starts_with('-')) {
+                    actions.push((vfs.resolve_path(path), false));
                 }
             }
             "echo" => {
                 if let Some(idx) = cmd_args.iter().position(|r| r == ">") {
                     if let Some(path) = cmd_args.get(idx + 1) {
-                        let resolved = vfs.resolve_path(path);
-                        drop(vfs);
-                        vfs::Vfs::ensure_handle_static(&resolved, true).await?;
+                        actions.push((vfs.resolve_path(path), true));
                     }
                 }
             }
             "cp" | "mv" => {
                 if cmd_args.len() >= 2 {
-                    let src = vfs.resolve_path(&cmd_args[0]);
-                    let dest = vfs.resolve_path(&cmd_args[1]);
-                    drop(vfs);
-                    vfs::Vfs::ensure_handle_static(&src, false).await?;
-                    vfs::Vfs::ensure_handle_static(&dest, true).await?;
+                    actions.push((vfs.resolve_path(&cmd_args[0]), false));
+                    actions.push((vfs.resolve_path(&cmd_args[1]), true));
                 }
             }
             _ => {}
         }
+    }
+
+    for (resolved, create) in actions {
+        vfs::Vfs::ensure_handle_static(&resolved, create).await?;
     }
 
     let res = match cmd.as_str() {
@@ -153,7 +150,7 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
         },
         "xargs" => {
             if cmd_args.len() >= 2 {
-                commands::xargs(&cmd_args[0], &cmd_args[1])
+                commands::xargs(&cmd_args[0], &cmd_args[1]).await
             } else {
                 "xargs requires command and input".to_string()
             }
@@ -186,9 +183,10 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
         },
         "mkdir" => {
             if cmd_args.len() >= 1 {
-                let vfs_lock = vfs::get_vfs().lock().unwrap();
-                let resolved = vfs_lock.resolve_path(&cmd_args[0]);
-                drop(vfs_lock);
+                let resolved = {
+                    let vfs_lock = vfs::get_vfs().lock().unwrap();
+                    vfs_lock.resolve_path(&cmd_args[0])
+                };
                 match vfs::Vfs::mkdir_p(&resolved).await {
                     Ok(_) => format!("Directory created: {}", resolved),
                     Err(e) => format!("mkdir Error: {:?}", e),
@@ -212,15 +210,28 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
                 "stat requires path".to_string()
             }
         },
+        "_list_files" => {
+            let vfs = vfs::get_vfs().lock().unwrap();
+            vfs.list_files().join("\n")
+        },
         _ => format!("Unknown command: {}", cmd),
     };
     Ok(res)
 }
 
 #[wasm_bindgen]
-pub fn run_mss(code: &str) -> String {
+pub async fn run_mss(code: &str) -> String {
     let mut interpreter = mss::Interpreter::new();
-    interpreter.run(code)
+    interpreter.cmd_executor = Some(|cmd| {
+        use futures::future::FutureExt;
+        async move {
+            match execute_command(&cmd).await {
+                Ok(s) => Ok(s),
+                Err(e) => Err(format!("{:?}", e)),
+            }
+        }.boxed_local()
+    });
+    interpreter.run(code).await
 }
 
 #[wasm_bindgen]

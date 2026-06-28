@@ -27,6 +27,21 @@
 
         term.onData(async e => {
             switch (e) {
+                case '\t': // Tab
+                    const lastArg = input.split(' ').pop() || '';
+                    if (lastArg.length > 0) {
+                        const filesStr = await workerApi.executeCommand("_list_files");
+                        const files = filesStr.split('\n');
+                        const matches = files.filter((f: string) => f.startsWith(lastArg));
+                        if (matches.length === 1) {
+                            const completion = matches[0].slice(lastArg.length);
+                            input += completion;
+                            term.write(completion);
+                        } else if (matches.length > 1) {
+                            term.write('\r\n' + matches.join('  ') + '\r\n$ ' + input);
+                        }
+                    }
+                    break;
                 case '\r': // Enter
                     term.write('\r\n');
                     if (input.trim()) {
