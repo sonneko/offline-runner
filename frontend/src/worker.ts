@@ -32,11 +32,6 @@ const api = {
         (self as any).readSync = api.readSync;
         (self as any).writeSync = api.writeSync;
         (self as any).truncateSync = api.truncateSync;
-        (self as any).httpGet = async (url: string) => {
-            const res = await fetch(url);
-            return await res.text();
-        };
-        (self as any).sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
         await init_vfs();
         return "Wasm Initialized with Sync I/O";

@@ -16,7 +16,6 @@ js-sys = "0.3.103"
 lazy_static = "1.5.0"
 regex = "1.11.1"
 wasm-bindgen-futures = "0.4.50"
-futures = "0.3.31"
 
 [dependencies.web-sys]
 version = "0.3.103"
@@ -37,4 +36,3 @@ features = [
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.76"
-tokio = { version = "1", features = ["full"] }

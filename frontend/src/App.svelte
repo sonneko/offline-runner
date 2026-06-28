@@ -74,7 +74,7 @@
     <div class="pane main-content">
         <div class="upper">
             <div class="pane editor-pane">
-                <Editor bind:this={editor} {workerApi} />
+                <Editor bind:this={editor} />
             </div>
             <div class="pane preview-pane">
                 <Preview content={previewContent} type={previewType} />

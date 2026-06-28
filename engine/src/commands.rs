@@ -151,21 +151,8 @@ pub fn find(path: &str, pattern: &str) -> String {
     }
 }
 
-pub fn xargs<'a>(cmd: &'a str, input: &'a str) -> futures::future::LocalBoxFuture<'a, String> {
-    use futures::future::FutureExt;
-    async move {
-        let mut outputs = Vec::new();
-        for line in input.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            let cmd_line = format!("{} {}", cmd, trimmed);
-            match crate::execute_command(&cmd_line).await {
-                Ok(res) => outputs.push(res),
-                Err(e) => outputs.push(format!("xargs error: {:?}", e)),
-            }
-        }
-        outputs.join("\n")
-    }.boxed_local()
+pub fn xargs(_cmd: &str, _input: &str) -> String {
+    format!("xargs is currently limited in this environment")
 }
 
 pub fn stat(path: &str) -> String {
