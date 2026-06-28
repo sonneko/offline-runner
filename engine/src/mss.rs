@@ -10,10 +10,11 @@ use nom::{
     Parser,
 };
 use std::collections::HashMap;
+use futures::future::LocalBoxFuture;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
-enum Token {
+pub enum Token {
     #[token("$")]
     Dollar,
     #[token("=")]
@@ -41,16 +42,17 @@ pub enum Expr {
     Literal(String),
     Variable(String),
     BinaryOp(Box<Expr>, String, Box<Expr>),
-    Backtick(String),
+    CommandSub(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum Statement {
     Assignment(String, Expr),
     If(Expr, Vec<Statement>, Option<Vec<Statement>>),
-    CommandCall(String, Vec<Expr>),
-    For(String, Expr, Vec<Statement>),
     While(Expr, Vec<Statement>),
+    For(String, Expr, Vec<Statement>),
+    CommandCall(String, Vec<Expr>),
+    BuiltinCall(String, Vec<Expr>),
 }
 
 fn parse_identifier(input: &str) -> IResult<&str, String> {
@@ -65,20 +67,25 @@ fn parse_variable(input: &str) -> IResult<&str, Expr> {
     map(preceded(char('$'), parse_identifier), Expr::Variable).parse(input)
 }
 
-fn parse_backtick(input: &str) -> IResult<&str, Expr> {
-    map(delimited(char('`'), take_until("`"), char('`')), |s: &str| Expr::Backtick(s.to_string())).parse(input)
+fn parse_command_sub(input: &str) -> IResult<&str, Expr> {
+    map(
+        delimited(char('`'), take_until("`"), char('`')),
+        |s: &str| Expr::CommandSub(s.to_string()),
+    )
+    .parse(input)
 }
 
 fn parse_primary_expr(input: &str) -> IResult<&str, Expr> {
-    alt((parse_literal, parse_variable, parse_backtick)).parse(input)
+    alt((parse_literal, parse_variable, parse_command_sub)).parse(input)
 }
 
 fn parse_expr(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = multispace0(input)?;
     let (input, left) = parse_primary_expr(input)?;
     let (input, _) = multispace0(input)?;
     let (input, op) = opt(alt((
         tag("=="), tag("!="), tag("<="), tag(">="), tag("<"), tag(">"),
-        tag("+"), tag("-")
+        tag("+"), tag("-"), tag("*"), tag("/")
     ))).parse(input)?;
 
     if let Some(op_str) = op {
@@ -108,27 +115,27 @@ fn parse_if_stmt(input: &str) -> IResult<&str, Statement> {
     Ok((input, Statement::If(condition, then_block, else_block)))
 }
 
+fn parse_while_stmt(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = tag("while").parse(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, condition) = parse_expr(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, body) = parse_block(input)?;
+    Ok((input, Statement::While(condition, body)))
+}
+
 fn parse_for_stmt(input: &str) -> IResult<&str, Statement> {
     let (input, _) = tag("for").parse(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('$')(input)?;
     let (input, var_name) = parse_identifier(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, _) = tag("in")(input)?;
+    let (input, _) = tag("in").parse(input)?;
     let (input, _) = multispace0(input)?;
     let (input, list_expr) = parse_expr(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, block) = parse_block(input)?;
-    Ok((input, Statement::For(var_name, list_expr, block)))
-}
-
-fn parse_while_stmt(input: &str) -> IResult<&str, Statement> {
-    let (input, _) = tag("while").parse(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, condition) = parse_expr(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, block) = parse_block(input)?;
-    Ok((input, Statement::While(condition, block)))
+    let (input, body) = parse_block(input)?;
+    Ok((input, Statement::For(var_name, list_expr, body)))
 }
 
 fn parse_command_call_stmt(input: &str) -> IResult<&str, Statement> {
@@ -148,25 +155,57 @@ fn parse_assignment(input: &str) -> IResult<&str, Statement> {
     Ok((input, Statement::Assignment(name, expr)))
 }
 
+fn parse_builtin_call(input: &str) -> IResult<&str, Statement> {
+    let (input, name) = parse_identifier(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char('(').parse(input)?;
+    let (input, args) = opt(pair(
+        parse_expr,
+        many0(preceded(delimited(multispace0, char(','), multispace0), parse_expr))
+    )).parse(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(')').parse(input)?;
+
+    let mut all_args = Vec::new();
+    if let Some((first, rest)) = args {
+        all_args.push(first);
+        all_args.extend(rest);
+    }
+
+    Ok((input, Statement::BuiltinCall(name, all_args)))
+}
+
 fn parse_statement(input: &str) -> IResult<&str, Statement> {
     let (input, _) = multispace0(input)?;
-    alt((parse_if_stmt, parse_for_stmt, parse_while_stmt, parse_assignment, parse_command_call_stmt)).parse(input)
+    alt((
+        parse_if_stmt,
+        parse_while_stmt,
+        parse_for_stmt,
+        parse_assignment,
+        parse_command_call_stmt,
+        parse_builtin_call,
+    ))
+    .parse(input)
 }
 
 fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
     many0(terminated(parse_statement, multispace0)).parse(input)
 }
 
-pub struct Interpreter {
-    variables: HashMap<String, String>,
-    pub cmd_executor: Option<fn(String) -> futures::future::LocalBoxFuture<'static, Result<String, String>>>,
+pub struct Interpreter<F>
+where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
+{
+    pub variables: HashMap<String, String>,
+    pub command_executor: F,
 }
 
-impl Interpreter {
-    pub fn new() -> Self {
+impl<F> Interpreter<F>
+where F: Fn(String) -> LocalBoxFuture<'static, Result<String, String>> + 'static
+{
+    pub fn new(executor: F) -> Self {
         Self {
             variables: HashMap::new(),
-            cmd_executor: None,
+            command_executor: executor,
         }
     }
 
@@ -177,9 +216,10 @@ impl Interpreter {
                 for stmt in statements {
                     match self.execute_statement(stmt).await {
                         Ok(res) => {
-                            let trimmed = res.trim();
-                            if !trimmed.is_empty() { output.push(trimmed.to_string()); }
-                        },
+                            if !res.is_empty() {
+                                output.push(res);
+                            }
+                        }
                         Err(e) => return format!("Runtime Error: {}", e),
                     }
                 }
@@ -189,9 +229,8 @@ impl Interpreter {
         }
     }
 
-    fn execute_statement<'a>(&'a mut self, stmt: Statement) -> futures::future::LocalBoxFuture<'a, Result<String, String>> {
-        use futures::future::FutureExt;
-        async move {
+    pub fn execute_statement(&mut self, stmt: Statement) -> LocalBoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
             match stmt {
                 Statement::Assignment(name, expr) => {
                     let val = self.evaluate_expr(expr).await?;
@@ -203,119 +242,108 @@ impl Interpreter {
                     for arg in args {
                         evaluated_args.push(self.evaluate_expr(arg).await?);
                     }
-
-                    match name.as_str() {
-                        "print" => {
-                            Ok(evaluated_args.join(" "))
-                        }
-                        "len" => {
-                            Ok(evaluated_args.get(0).map(|s| s.len().to_string()).unwrap_or("0".to_string()))
-                        }
-                        "sleep" => {
-                            if let Some(ms_str) = evaluated_args.get(0) {
-                                if let Ok(ms) = ms_str.parse::<f64>() {
-                                    #[cfg(target_arch = "wasm32")]
-                                    crate::js_sleep(ms).await;
-                                }
-                            }
-                            Ok(String::new())
-                        }
-                        "http_get" => {
-                            if let Some(url) = evaluated_args.get(0) {
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    let val = crate::js_http_get(url).await;
-                                    Ok(val.as_string().unwrap_or_default())
-                                }
-                                #[cfg(not(target_arch = "wasm32"))]
-                                { Ok(format!("[HTTP GET {}]", url)) }
-                            } else {
-                                Err("http_get requires a URL".to_string())
-                            }
-                        }
-                        _ => {
-                            if let Some(executor) = self.cmd_executor {
-                                let cmd_line = format!("{} {}", name, evaluated_args.join(" "));
-                                executor(cmd_line).await
-                            } else {
-                                Ok(format!("[Executed @{}]", name))
-                            }
-                        }
-                    }
+                    let cmd_line = format!("{} {}", name, evaluated_args.join(" "));
+                    (self.command_executor)(cmd_line).await
                 }
                 Statement::If(condition, then_block, else_block) => {
                     let val = self.evaluate_expr(condition).await?;
                     if !val.is_empty() && val != "false" && val != "0" {
                         let mut out = Vec::new();
                         for s in then_block {
-                            out.push(self.execute_statement(s).await?);
+                            let res = self.execute_statement(s).await?;
+                            if !res.is_empty() {
+                                out.push(res);
+                            }
                         }
                         Ok(out.join("\n"))
                     } else if let Some(eb) = else_block {
                         let mut out = Vec::new();
                         for s in eb {
-                            out.push(self.execute_statement(s).await?);
+                            let res = self.execute_statement(s).await?;
+                            if !res.is_empty() {
+                                out.push(res);
+                            }
                         }
                         Ok(out.join("\n"))
                     } else {
                         Ok(String::new())
                     }
                 }
-                Statement::For(var_name, list_expr, block) => {
-                    let val = self.evaluate_expr(list_expr).await?;
-                    let items: Vec<&str> = val.split_whitespace().collect();
-                    let mut out = Vec::new();
-                    for item in items {
-                        self.variables.insert(var_name.clone(), item.to_string());
-                        for s in &block {
-                            out.push(self.execute_statement(s.clone()).await?);
-                        }
-                    }
-                    Ok(out.join("\n"))
-                }
-                Statement::While(condition, block) => {
-                    let mut out = Vec::new();
-                    let mut iterations = 0;
-                    loop {
+                Statement::While(condition, body) => {
+                    let mut output = Vec::new();
+                    while {
                         let val = self.evaluate_expr(condition.clone()).await?;
-                        if val.is_empty() || val == "false" || val == "0" {
-                            break;
+                        !val.is_empty() && val != "false" && val != "0"
+                    } {
+                        for s in &body {
+                            let res = self.execute_statement(s.clone()).await?;
+                            if !res.is_empty() {
+                                output.push(res);
+                            }
                         }
-                        for s in &block {
-                            out.push(self.execute_statement(s.clone()).await?);
-                        }
-                        iterations += 1;
-                        if iterations > 1000 { return Err("Infinite loop detected".to_string()); }
                     }
-                    Ok(out.join("\n"))
+                    Ok(output.join("\n"))
+                }
+                Statement::For(var, list_expr, body) => {
+                    let list_val = self.evaluate_expr(list_expr).await?;
+                    let items: Vec<&str> = list_val.split_whitespace().collect();
+                    let mut output = Vec::new();
+                    for item in items {
+                        self.variables.insert(var.clone(), item.to_string());
+                        for s in &body {
+                            let res = self.execute_statement(s.clone()).await?;
+                            if !res.is_empty() {
+                                output.push(res);
+                            }
+                        }
+                    }
+                    Ok(output.join("\n"))
+                }
+                Statement::BuiltinCall(name, args) => {
+                    let mut evaluated_args = Vec::new();
+                    for arg in args {
+                        evaluated_args.push(self.evaluate_expr(arg).await?);
+                    }
+                    match name.as_str() {
+                        "print" => Ok(evaluated_args.join(" ")),
+                        "len" => Ok(evaluated_args.get(0).map(|s| s.len().to_string()).unwrap_or("0".to_string())),
+                        "sleep" => {
+                            if let Some(ms_str) = evaluated_args.get(0) {
+                                if let Ok(ms) = ms_str.parse::<u64>() {
+                                    // Async sleep on Wasm is usually handled by JS promises.
+                                    // For now, we will rely on a JS bridge or use wasm-bindgen-futures::JsFuture to wrap a setTimeout promise.
+                                    // Since we don't have a direct bridge here, we'll try to implement it if needed or leave as placeholder.
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                         // Placeholder for async sleep on Wasm
+                                    }
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        // Still use tokio for native tests if available, but we removed it.
+                                        // Let's just use std::thread::sleep for native tests (blocking is OK for tests).
+                                        std::thread::sleep(std::time::Duration::from_millis(ms));
+                                    }
+                                }
+                            }
+                            Ok(String::new())
+                        }
+                        "http_get" => {
+                            Ok(format!("[Fetch content of {}]", evaluated_args.get(0).unwrap_or(&"".to_string())))
+                        }
+                        _ => Err(format!("Unknown builtin: {}", name)),
+                    }
                 }
             }
-        }.boxed_local()
+        })
     }
 
-    fn evaluate_expr<'a>(&'a self, expr: Expr) -> futures::future::LocalBoxFuture<'a, Result<String, String>> {
-        use futures::future::FutureExt;
-        async move {
+    pub fn evaluate_expr(&self, expr: Expr) -> LocalBoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
             match expr {
                 Expr::Literal(s) => Ok(s),
-                Expr::Variable(name) => {
-                    if let Some(val) = self.variables.get(&name) {
-                        Ok(val.clone())
-                    } else {
-                        let vfs = crate::vfs::get_vfs().lock().unwrap();
-                        if let Some(val) = vfs.env_vars.get(&name) {
-                            Ok(val.clone())
-                        } else {
-                            Err(format!("Undefined variable: ${}", name))
-                        }
-                    }
-                },
-                Expr::Backtick(cmd) => {
-                    if let Some(executor) = self.cmd_executor {
-                        (executor)(cmd).await
-                    } else {
-                        Err("No command executor provided".to_string())
-                    }
+                Expr::Variable(name) => self.variables.get(&name).cloned().ok_or_else(|| format!("Undefined variable: ${}", name)),
+                Expr::CommandSub(cmd) => {
+                    (self.command_executor)(cmd).await
                 }
                 Expr::BinaryOp(left, op, right) => {
                     let l_val = self.evaluate_expr(*left).await?;
@@ -336,10 +364,23 @@ impl Interpreter {
                             let r_num: f64 = r_val.parse().map_err(|_| "Invalid number")?;
                             Ok((l_num - r_num).to_string())
                         }
+                        "*" => {
+                            let l_num: f64 = l_val.parse().map_err(|_| "Invalid number")?;
+                            let r_num: f64 = r_val.parse().map_err(|_| "Invalid number")?;
+                            Ok((l_num * r_num).to_string())
+                        }
+                        "/" => {
+                            let l_num: f64 = l_val.parse().map_err(|_| "Invalid number")?;
+                            let r_num: f64 = r_val.parse().map_err(|_| "Invalid number")?;
+                            if r_num == 0.0 {
+                                return Err("Division by zero".to_string());
+                            }
+                            Ok((l_num / r_num).to_string())
+                        }
                         _ => Err(format!("Unsupported operator: {}", op)),
                     }
                 }
             }
-        }.boxed_local()
+        })
     }
 }

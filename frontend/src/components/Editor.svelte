@@ -1,58 +1,98 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, createEventDispatcher } from 'svelte';
     import { EditorView, basicSetup } from 'codemirror';
-    import { mssLanguage } from '../lib/mss-lang';
+    import { keymap } from '@codemirror/view';
+    import { indentWithTab } from '@codemirror/commands';
     import { oneDark } from '@codemirror/theme-one-dark';
+    import { mss } from '../lib/mss-lang';
 
-    let editorElement: HTMLElement;
+    export let workerApi: any;
+
+    let editorContainer: HTMLElement;
     let view: EditorView;
+    let currentPath: string | null = null;
+    const dispatch = createEventDispatcher();
 
     onMount(() => {
         view = new EditorView({
-            doc: '// Write your Mini-ShellScript here\n@ls\n',
+            doc: '',
             extensions: [
                 basicSetup,
-                mssLanguage,
-                oneDark
+                keymap.of([
+                    indentWithTab,
+                    {
+                        key: "Mod-s",
+                        run: () => {
+                            saveFile();
+                            return true;
+                        }
+                    }
+                ]),
+                oneDark,
+                mss()
             ],
-            parent: editorElement
+            parent: editorContainer
         });
-    });
 
-    onDestroy(() => {
-        if (view) view.destroy();
+        return () => view.destroy();
     });
-
-    export let workerApi: any;
-    let currentPath = 'untitled.mss';
 
     export function getContent() {
         return view.state.doc.toString();
     }
 
-    export async function saveFile() {
-        if (!workerApi) return;
-        const code = getContent();
-        const res = await workerApi.executeCommand(`write "${currentPath}" "${code}"`);
-        console.log("Save result:", res);
+    export function setContent(content: string) {
+        view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: content }
+        });
     }
 
-    onMount(() => {
-        window.addEventListener('keydown', (e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-                e.preventDefault();
-                saveFile();
-            }
-        });
-    });
+    export async function loadFile(path: string) {
+        if (!workerApi) return;
+        currentPath = path;
+        const result = await workerApi.executeCommand(`cat "${path}"`);
+        if (!result.startsWith('cat: ')) {
+            setContent(result);
+        } else {
+            console.error(result);
+        }
+    }
+
+    export async function saveFile() {
+        if (!workerApi) {
+             alert("Worker not ready");
+             return;
+        }
+
+        let path = currentPath;
+        if (!path) {
+            path = prompt("Enter filename to save:", "script.mss");
+            if (!path) return;
+            currentPath = path;
+        }
+
+        const content = getContent();
+        // Use the 'write' command we implemented in the backend
+        const result = await workerApi.executeCommand(`write "${path}" "${content}"`);
+        console.log(result);
+        dispatch('save', { path });
+    }
+
+    export function newFile() {
+        currentPath = null;
+        setContent('');
+    }
 </script>
 
 <div class="editor-wrapper">
-    <div class="editor-toolbar">
-        <span>{currentPath}</span>
-        <button on:click={saveFile}>Save</button>
+    <div class="toolbar">
+        <span class="filename">{currentPath || 'Untitled'}</span>
+        <div class="actions">
+            <button on:click={newFile}>New</button>
+            <button on:click={saveFile}>Save</button>
+        </div>
     </div>
-    <div bind:this={editorElement} class="editor-container"></div>
+    <div bind:this={editorContainer} class="cm-editor-container"></div>
 </div>
 
 <style>
@@ -62,27 +102,38 @@
         height: 100%;
         width: 100%;
     }
-    .editor-toolbar {
+    .toolbar {
         height: 30px;
         background: #252525;
+        border-bottom: 1px solid #333;
         display: flex;
         align-items: center;
         padding: 0 10px;
+        justify-content: space-between;
         font-size: 12px;
-        border-bottom: 1px solid #333;
-        gap: 10px;
+        color: #aaa;
     }
-    .editor-toolbar button {
-        background: #444;
-        color: white;
-        border: none;
+    .actions {
+        display: flex;
+        gap: 5px;
+    }
+    .actions button {
+        background: #333;
+        color: #ccc;
+        border: 1px solid #444;
         padding: 2px 8px;
         border-radius: 3px;
         cursor: pointer;
     }
-    .editor-container {
+    .actions button:hover {
+        background: #444;
+        color: white;
+    }
+    .cm-editor-container {
         flex: 1;
-        width: 100%;
         overflow: hidden;
+    }
+    :global(.cm-editor) {
+        height: 100%;
     }
 </style>

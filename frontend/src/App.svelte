@@ -4,9 +4,11 @@
   import Terminal from './components/Terminal.svelte';
   import Editor from './components/Editor.svelte';
   import Preview from './components/Preview.svelte';
+  import FileTree from './components/FileTree.svelte';
 
   let workerApi: any;
   let editor: Editor;
+  let fileTree: FileTree;
   let previewContent = 'Welcome! Run a command or write a script.';
   let previewType: 'mermaid' | 'pdf' | 'text' = 'text';
   let showCommandPalette = false;
@@ -18,6 +20,8 @@
   }
 
   onMount(async () => {
+    // Vite handles the worker URL.
+    // If there are issues, it might be due to Vite's worker loading mechanism.
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     workerApi = Comlink.wrap(worker);
     await workerApi.init();
@@ -54,7 +58,18 @@
           previewType = 'text';
           showCommandPalette = false;
           commandInput = '';
+          if (fileTree) fileTree.refresh();
       }
+  }
+
+  async function handleFileSelect(e: CustomEvent) {
+      if (editor) {
+          await editor.loadFile(e.detail.path);
+      }
+  }
+
+  function handleFileSave() {
+      if (fileTree) fileTree.refresh();
   }
 </script>
 
@@ -65,16 +80,13 @@
     <div class="info">Press Cmd+P for Command Palette</div>
   </div>
   <div class="container">
-    <div class="pane file-tree">
-        <div class="pane-header">Files</div>
-        <div class="tree-content">
-            <div>welcome.txt</div>
-        </div>
+    <div class="pane file-tree-pane">
+        <FileTree bind:this={fileTree} {workerApi} on:select={handleFileSelect} />
     </div>
     <div class="pane main-content">
         <div class="upper">
             <div class="pane editor-pane">
-                <Editor bind:this={editor} {workerApi} />
+                <Editor bind:this={editor} {workerApi} on:save={handleFileSave} />
             </div>
             <div class="pane preview-pane">
                 <Preview content={previewContent} type={previewType} />
@@ -82,15 +94,15 @@
         </div>
         <div class="pane terminal-pane">
             {#if workerApi}
-                <Terminal {workerApi} />
+                <Terminal {workerApi} on:commandExecuted={() => fileTree?.refresh()} />
             {/if}
         </div>
     </div>
   </div>
 
   {#if showCommandPalette}
-    <div class="command-palette-overlay" on:click={() => showCommandPalette = false}>
-        <div class="command-palette" on:click|stopPropagation>
+    <div class="command-palette-overlay" role="button" tabindex="0" on:click={() => showCommandPalette = false} on:keydown={(e) => e.key === 'Escape' && (showCommandPalette = false)}>
+        <div class="command-palette" role="none" on:click|stopPropagation>
             <input
                 type="text"
                 placeholder="Type a command..."
@@ -141,19 +153,9 @@
     flex-direction: column;
     border: 1px solid #333;
   }
-  .pane-header {
-      padding: 5px 10px;
-      background: #333;
-      font-size: 12px;
-      text-transform: uppercase;
-  }
-  .file-tree {
+  .file-tree-pane {
       width: 200px;
       background: #1e1e1e;
-  }
-  .tree-content {
-      padding: 10px;
-      font-size: 14px;
   }
   .main-content {
       flex: 1;

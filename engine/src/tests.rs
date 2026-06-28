@@ -54,25 +54,54 @@ mod tests {
         assert!(stat("lines.txt").contains("Size: 9"));
     }
 
-    #[tokio::test]
+    #[test]
     async fn test_mss_expr() {
         use crate::run_mss;
-        assert_eq!(run_mss("$a = \"foo\"\n$b = \"bar\"\nif $a == $a { @print \"yes\" }").await, "yes");
-        assert_eq!(run_mss("$a = \"1\"\n$b = \"2\"\n$c = $a + $b\nif $c == \"3\" { @print \"yes\" }").await, "yes");
-        assert_eq!(run_mss("$a = \"hello\"\n$b = \"world\"\n$c = $a + \" \" + $b\nif $c == \"hello world\" { @print \"yes\" }").await, "yes");
+        assert_eq!(run_mss("$a = \"foo\"\n$b = \"bar\"\nif $a == $a { print(\"yes\") }").await, "yes");
+        assert_eq!(run_mss("$a = \"1\"\n$b = \"2\"\n$c = $a + $b\nif $c == \"3\" { print(\"yes\") }").await, "yes");
+        assert_eq!(run_mss("$a = \"hello\"\n$b = \"world\"\n$c = $a + \" \" + $b\nif $c == \"hello world\" { print(\"yes\") }").await, "yes");
     }
 
-    #[tokio::test]
+    #[test]
+    async fn test_mss_builtins() {
+        use crate::run_mss;
+        assert_eq!(run_mss("print(\"hello\", \"world\")").await, "hello world");
+        assert_eq!(run_mss("len(\"abc\")").await, "3");
+        assert_eq!(run_mss("$a = \"10\"\n$b = \"2\"\nprint($a * $b)").await, "20");
+        assert_eq!(run_mss("$a = \"10\"\n$b = \"2\"\nprint($a / $b)").await, "5");
+    }
+
+    #[test]
     async fn test_mss_loops() {
         use crate::run_mss;
-        let script = "
+        let code = "
             $count = \"0\"
-            for $i in \"1 2 3\" {
+            while $count != \"3\" {
                 $count = $count + \"1\"
             }
-            if $count == \"3\" { @print \"Loop OK\" }
+            if $count == \"3\" { print(\"done\") }
         ";
-        assert_eq!(run_mss(script).await, "Loop OK");
+        assert_eq!(run_mss(code).await, "done");
+
+        let code_for = "
+            for $i in \"a b c\" {
+                print($i)
+            }
+        ";
+        let res = run_mss(code_for).await;
+        assert!(res.contains("a"));
+        assert!(res.contains("b"));
+        assert!(res.contains("c"));
+    }
+
+    #[test]
+    async fn test_mss_command_sub() {
+        use crate::run_mss;
+        let code = "
+            $res = `echo \"hello\"`
+            if $res == \"hello\" { print(\"yes\") }
+        ";
+        assert_eq!(run_mss(code).await, "yes");
     }
 
     #[test]
