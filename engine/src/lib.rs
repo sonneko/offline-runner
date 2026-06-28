@@ -210,6 +210,10 @@ async fn execute_single_command(args: &[String]) -> Result<String, JsValue> {
                 "stat requires path".to_string()
             }
         },
+        "_list_files" => {
+            let vfs = vfs::get_vfs().lock().unwrap();
+            vfs.list_files().join("\n")
+        },
         _ => format!("Unknown command: {}", cmd),
     };
     Ok(res)
