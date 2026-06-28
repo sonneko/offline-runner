@@ -315,6 +315,7 @@ where
 {
     pub variables: Vec<HashMap<String, String>>, // Stack of scopes
     pub functions: HashMap<String, Function>,
+    pub call_stack: Vec<String>,
     pub command_executor: F,
     pub http_get_fn: G,
     pub sleep_fn: S,
@@ -331,6 +332,7 @@ where
         Self {
             variables: vec![HashMap::new()],
             functions: HashMap::new(),
+            call_stack: vec!["main".to_string()],
             command_executor: executor,
             http_get_fn,
             sleep_fn,
@@ -374,7 +376,14 @@ where
                                 output.push(res);
                             }
                         }
-                        Err(e) => return format!("Runtime Error: {}", e),
+                        Err(e) => {
+                            let mut trace = String::new();
+                            trace.push_str(&format!("Runtime Error: {}\nStack trace:\n", e));
+                            for (i, frame) in self.call_stack.iter().rev().enumerate() {
+                                trace.push_str(&format!("  {}: {}\n", i, frame));
+                            }
+                            return trace;
+                        }
                     }
                 }
                 output.join("\n")
@@ -496,6 +505,7 @@ where
 
                     // Check if it's a user-defined function call
                     if let Some(func) = self.functions.get(&name).cloned() {
+                        self.call_stack.push(name.clone());
                         let mut new_scope = HashMap::new();
                         for (i, param) in func.params.iter().enumerate() {
                             let val = evaluated_args.get(i).cloned().unwrap_or_default();
@@ -516,6 +526,7 @@ where
                             }
                         }
                         self.variables.pop();
+                        self.call_stack.pop();
                         return if !return_val.is_empty() { Ok(return_val) } else { Ok(output.join("\n")) };
                     }
 
