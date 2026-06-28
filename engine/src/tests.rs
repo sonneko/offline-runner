@@ -149,6 +149,12 @@ mod tests {
         assert_eq!(run_mss_test(code).await, "/home/user");
     }
 
+    #[tokio::test]
+    async fn test_mss_json() {
+        let code = "print(json_parse(\"{\\\"a\\\": 1}\"))";
+        assert_eq!(run_mss_test(code).await, "{\"a\":1}");
+    }
+
     #[test]
     fn test_parse_args() {
         use crate::commands::parse_args;

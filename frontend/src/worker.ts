@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import init, { execute_command, run_mss, init_vfs, setup_panic_hook } from '../../engine/pkg/engine.js';
+import init, { execute_command, run_mss, init_vfs, setup_engine } from '../../engine/pkg/engine.js';
 
 const STATE_IDLE = 0;
 const STATE_REQ = 1;
@@ -14,7 +14,7 @@ let ioWorker: Worker;
 const api = {
     async init() {
         await init();
-        setup_panic_hook();
+        setup_engine();
 
         // Initialize SharedArrayBuffer for sync I/O (1MB for data)
         sharedBuffer = new SharedArrayBuffer(8 + 1024 * 1024);

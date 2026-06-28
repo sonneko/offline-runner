@@ -9,6 +9,25 @@ use js_sys::Uint8Array;
 use std::panic;
 use std::sync::Arc;
 use futures::future::LocalBoxFuture;
+use log::{Record, Level, Metadata, LevelFilter};
+
+struct WebLogger;
+
+impl log::Log for WebLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            log(&format!("{} - {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: WebLogger = WebLogger;
 
 #[wasm_bindgen]
 extern "C" {
@@ -32,12 +51,15 @@ extern "C" {
 }
 
 #[wasm_bindgen]
-pub fn setup_panic_hook() {
+pub fn setup_engine() {
     #[cfg(target_arch = "wasm32")]
-    panic::set_hook(Box::new(|info| {
-        let msg = info.to_string();
-        log(&format!("RUST PANIC: {}", msg));
-    }));
+    {
+        panic::set_hook(Box::new(|info| {
+            let msg = info.to_string();
+            log(&format!("RUST PANIC: {}", msg));
+        }));
+        log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info)).ok();
+    }
 }
 
 #[wasm_bindgen]
