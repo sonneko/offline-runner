@@ -99,7 +99,40 @@ fn parse_var_identifier(input: &str) -> IResult<&str, String> {
 }
 
 fn parse_literal(input: &str) -> IResult<&str, Expr> {
-    map(delimited(char('"'), take_until("\""), char('"')), |s: &str| Expr::Literal(s.to_string())).parse(input)
+    if !input.starts_with('"') {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    let chars = input[1..].chars();
+    let mut parsed_len = 1;
+    let mut escaped = false;
+    let mut content = String::new();
+
+    for c in chars {
+        parsed_len += c.len_utf8();
+        if escaped {
+            match c {
+                'n' => content.push('\n'),
+                'r' => content.push('\r'),
+                't' => content.push('\t'),
+                '\\' => content.push('\\'),
+                '"' => content.push('"'),
+                _ => {
+                    content.push('\\');
+                    content.push(c);
+                }
+            }
+            escaped = false;
+        } else {
+            if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                return Ok((&input[parsed_len..], Expr::Literal(content)));
+            } else {
+                content.push(c);
+            }
+        }
+    }
+    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
 }
 
 fn parse_variable(input: &str) -> IResult<&str, Expr> {
@@ -264,7 +297,7 @@ fn parse_statement(input: &str) -> IResult<&str, Statement> {
     .parse(input)
 }
 
-fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
+pub fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
     many0(terminated(parse_statement, multispace0)).parse(input)
 }
 
@@ -337,7 +370,7 @@ where
                     }
                     match self.execute_statement(stmt).await {
                         Ok(res) => {
-                            if res != "__NO_STDOUT__" {
+                            if res != "__NO_STDOUT__" && !res.is_empty() {
                                 output.push(res);
                             }
                         }
