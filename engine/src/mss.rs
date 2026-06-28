@@ -337,7 +337,7 @@ where
                     }
                     match self.execute_statement(stmt).await {
                         Ok(res) => {
-                            if !res.is_empty() {
+                            if res != "__NO_STDOUT__" {
                                 output.push(res);
                             }
                         }
@@ -502,6 +502,14 @@ where
                                 (self.http_get_fn)(url.clone()).await
                             } else {
                                 Err("http_get requires a URL".to_string())
+                            }
+                        }
+                        "json_parse" => {
+                            if let Some(json_str) = evaluated_args.get(0) {
+                                let v: serde_json::Value = serde_json::from_str(json_str).map_err(|e| format!("JSON Parse Error: {}", e))?;
+                                Ok(v.to_string())
+                            } else {
+                                Err("json_parse requires a string".to_string())
                             }
                         }
                         _ => Err(format!("Unknown call: {}", name)),
