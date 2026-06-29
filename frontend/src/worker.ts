@@ -12,7 +12,15 @@ let dataBuffer: Uint8Array;
 let ioWorker: Worker;
 
 const api = {
-    async init() {
+    async init(logCallback?: (msg: string) => void) {
+        if (logCallback) {
+            const originalConsoleLog = console.log;
+            console.log = (...args) => {
+                logCallback(args.join(' '));
+                originalConsoleLog(...args);
+            };
+        }
+
         await init();
         setup_engine();
 

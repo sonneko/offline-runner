@@ -14,6 +14,11 @@
     let historyIndex = -1;
     const dispatch = createEventDispatcher();
 
+    export function printLog(message: string) {
+        term.writeln('\r\n' + message);
+        term.write('$ ' + input);
+    }
+
     async function loadHistory() {
         return new Promise<string[]>((resolve) => {
             const request = indexedDB.open("terminalHistory", 1);

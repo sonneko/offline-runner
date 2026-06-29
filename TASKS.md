@@ -8,7 +8,7 @@
 - [x] Rust側での panic_hook の設定（エラーをターミナルに表示するため）
 - [x] Comlink経由の非同期初期化シーケンスの実装
 - [x] Worker内でのWasmメモリ割り当て上限の監視ロジック
-- [ ] Loggerの実装（RustのログをJSのコンソール/UIへ転送）
+- [x] Loggerの実装（RustのログをJSのコンソール/UIへ転送）
 - [ ] 実行タイムアウト管理（無限ループするスクリプトの強制終了機能）
 - [x] Worker内での StorageManager の権限チェック
 - [ ] Wasmバイナリの Response.arrayBuffer() からのストリーミングコンパイル実装
