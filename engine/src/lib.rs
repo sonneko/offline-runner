@@ -325,6 +325,18 @@ pub fn clear_interrupt() {
 }
 
 #[wasm_bindgen]
+pub fn get_wasm_memory_size() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        core::arch::wasm32::memory_size(0)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+#[wasm_bindgen]
 pub async fn init_vfs() -> Result<(), JsValue> {
     #[cfg(not(target_arch = "wasm32"))]
     { return Ok(()); }

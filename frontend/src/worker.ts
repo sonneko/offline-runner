@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import init, { execute_command, run_mss, init_vfs, setup_engine } from '../../engine/pkg/engine.js';
+import init, { execute_command, run_mss, init_vfs, setup_engine, get_wasm_memory_size } from '../../engine/pkg/engine.js';
 
 const STATE_IDLE = 0;
 const STATE_REQ = 1;
@@ -59,6 +59,20 @@ const api = {
         };
 
         await init_vfs();
+
+        // Memory limit monitoring
+        setInterval(() => {
+            try {
+                const pages = get_wasm_memory_size();
+                const sizeMb = (pages * 64 * 1024) / (1024 * 1024);
+                if (sizeMb > 500) {
+                    console.warn(`High Wasm Memory Usage: ${sizeMb.toFixed(2)} MB`);
+                }
+            } catch (e) {
+                // Ignore if not initialized
+            }
+        }, 10000);
+
         return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmdLine: string) {
