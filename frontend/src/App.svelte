@@ -42,7 +42,7 @@
   async function runScript() {
     if (editor && workerApi) {
       const code = editor.getContent();
-      const result = await workerApi.runMss(code);
+      const result = await workerApi.runMss(code, 5000);
       previewContent = result;
       previewType = 'text';
     }

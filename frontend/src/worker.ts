@@ -161,8 +161,21 @@ const api = {
         Atomics.store(sharedInt32, 0, STATE_IDLE);
         throw new Error("Sync Truncate Failed");
     },
-    async runMss(code: string) {
-        return run_mss(code);
+    async runMss(code: string, timeoutMs: number = 0) {
+        let timerId: any = null;
+        if (timeoutMs > 0) {
+            timerId = setTimeout(() => {
+                api.interrupt();
+            }, timeoutMs);
+        }
+
+        try {
+            return await run_mss(code);
+        } finally {
+            if (timerId !== null) {
+                clearTimeout(timerId);
+            }
+        }
     },
     async interrupt() {
         // We'll need to import 'interrupt' from engine
