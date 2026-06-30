@@ -7,6 +7,7 @@
   import FileTree from './components/FileTree.svelte';
 
   let workerApi: any;
+  let terminal: Terminal;
   let editor: Editor;
   let fileTree: FileTree;
   let previewContent = 'Welcome! Run a command or write a script.';
@@ -24,7 +25,11 @@
     // If there are issues, it might be due to Vite's worker loading mechanism.
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     workerApi = Comlink.wrap(worker);
-    await workerApi.init();
+    await workerApi.init(Comlink.proxy((msg: string) => {
+        if (terminal) {
+            terminal.printLog(msg);
+        }
+    }));
 
     window.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
@@ -94,7 +99,7 @@
         </div>
         <div class="pane terminal-pane">
             {#if workerApi}
-                <Terminal {workerApi} on:commandExecuted={() => fileTree?.refresh()} />
+                <Terminal bind:this={terminal} {workerApi} on:commandExecuted={() => fileTree?.refresh()} />
             {/if}
         </div>
     </div>

@@ -249,6 +249,20 @@ pub async fn execute_single_command(args: &[String]) -> Result<String, JsValue> 
 }
 
 #[wasm_bindgen]
+pub fn lint_mss(code: &str) -> Result<(), JsValue> {
+    match mss::parse_program(code) {
+        Ok((remaining, _)) => {
+            if remaining.trim().is_empty() {
+                Ok(())
+            } else {
+                Err(JsValue::from_str(&format!("Parse Error: unexpected trailing characters '{}'", remaining)))
+            }
+        }
+        Err(e) => Err(JsValue::from_str(&format!("Parse Error: {:?}", e))),
+    }
+}
+
+#[wasm_bindgen]
 pub async fn run_mss(code: &str) -> String {
     let executor = |cmd_line: String| -> LocalBoxFuture<'static, Result<String, String>> {
         Box::pin(async move {
@@ -308,6 +322,18 @@ pub fn interrupt() {
 #[wasm_bindgen]
 pub fn clear_interrupt() {
     INTERRUPT_FLAG.store(false, Ordering::SeqCst);
+}
+
+#[wasm_bindgen]
+pub fn get_wasm_memory_size() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        core::arch::wasm32::memory_size(0)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
 }
 
 #[wasm_bindgen]

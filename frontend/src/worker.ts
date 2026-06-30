@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import init, { execute_command, run_mss, init_vfs, setup_engine } from '../../engine/pkg/engine.js';
+import init, { execute_command, run_mss, init_vfs, setup_engine, get_wasm_memory_size } from '../../engine/pkg/engine.js';
 
 const STATE_IDLE = 0;
 const STATE_REQ = 1;
@@ -12,7 +12,15 @@ let dataBuffer: Uint8Array;
 let ioWorker: Worker;
 
 const api = {
-    async init() {
+    async init(logCallback?: (msg: string) => void) {
+        if (logCallback) {
+            const originalConsoleLog = console.log;
+            console.log = (...args) => {
+                logCallback(args.join(' '));
+                originalConsoleLog(...args);
+            };
+        }
+
         await init();
         setup_engine();
 
@@ -23,6 +31,17 @@ const api = {
 
         // Initialize I/O Worker
         ioWorker = new Worker(new URL('./io-worker.ts', import.meta.url), { type: 'module' });
+
+        // Check storage persist permission
+        if (navigator.storage && navigator.storage.persist) {
+            const isPersisted = await navigator.storage.persisted();
+            if (!isPersisted) {
+                const granted = await navigator.storage.persist();
+                console.log(`Storage persist granted: ${granted}`);
+            } else {
+                console.log('Storage is already persisted.');
+            }
+        }
 
         // Get OPFS root to pass to I/O worker
         const root = await navigator.storage.getDirectory();
@@ -48,6 +67,20 @@ const api = {
         };
 
         await init_vfs();
+
+        // Memory limit monitoring
+        setInterval(() => {
+            try {
+                const pages = get_wasm_memory_size();
+                const sizeMb = (pages * 64 * 1024) / (1024 * 1024);
+                if (sizeMb > 500) {
+                    console.warn(`High Wasm Memory Usage: ${sizeMb.toFixed(2)} MB`);
+                }
+            } catch (e) {
+                // Ignore if not initialized
+            }
+        }, 10000);
+
         return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmdLine: string) {

@@ -99,7 +99,40 @@ fn parse_var_identifier(input: &str) -> IResult<&str, String> {
 }
 
 fn parse_literal(input: &str) -> IResult<&str, Expr> {
-    map(delimited(char('"'), take_until("\""), char('"')), |s: &str| Expr::Literal(s.to_string())).parse(input)
+    if !input.starts_with('"') {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    let chars = input[1..].chars();
+    let mut parsed_len = 1;
+    let mut escaped = false;
+    let mut content = String::new();
+
+    for c in chars {
+        parsed_len += c.len_utf8();
+        if escaped {
+            match c {
+                'n' => content.push('\n'),
+                'r' => content.push('\r'),
+                't' => content.push('\t'),
+                '\\' => content.push('\\'),
+                '"' => content.push('"'),
+                _ => {
+                    content.push('\\');
+                    content.push(c);
+                }
+            }
+            escaped = false;
+        } else {
+            if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                return Ok((&input[parsed_len..], Expr::Literal(content)));
+            } else {
+                content.push(c);
+            }
+        }
+    }
+    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
 }
 
 fn parse_variable(input: &str) -> IResult<&str, Expr> {
@@ -264,7 +297,7 @@ fn parse_statement(input: &str) -> IResult<&str, Statement> {
     .parse(input)
 }
 
-fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
+pub fn parse_program(input: &str) -> IResult<&str, Vec<Statement>> {
     many0(terminated(parse_statement, multispace0)).parse(input)
 }
 
@@ -282,6 +315,7 @@ where
 {
     pub variables: Vec<HashMap<String, String>>, // Stack of scopes
     pub functions: HashMap<String, Function>,
+    pub call_stack: Vec<String>,
     pub command_executor: F,
     pub http_get_fn: G,
     pub sleep_fn: S,
@@ -298,6 +332,7 @@ where
         Self {
             variables: vec![HashMap::new()],
             functions: HashMap::new(),
+            call_stack: vec!["main".to_string()],
             command_executor: executor,
             http_get_fn,
             sleep_fn,
@@ -337,11 +372,18 @@ where
                     }
                     match self.execute_statement(stmt).await {
                         Ok(res) => {
-                            if res != "__NO_STDOUT__" {
+                            if res != "__NO_STDOUT__" && !res.is_empty() {
                                 output.push(res);
                             }
                         }
-                        Err(e) => return format!("Runtime Error: {}", e),
+                        Err(e) => {
+                            let mut trace = String::new();
+                            trace.push_str(&format!("Runtime Error: {}\nStack trace:\n", e));
+                            for (i, frame) in self.call_stack.iter().rev().enumerate() {
+                                trace.push_str(&format!("  {}: {}\n", i, frame));
+                            }
+                            return trace;
+                        }
                     }
                 }
                 output.join("\n")
@@ -463,6 +505,7 @@ where
 
                     // Check if it's a user-defined function call
                     if let Some(func) = self.functions.get(&name).cloned() {
+                        self.call_stack.push(name.clone());
                         let mut new_scope = HashMap::new();
                         for (i, param) in func.params.iter().enumerate() {
                             let val = evaluated_args.get(i).cloned().unwrap_or_default();
@@ -483,6 +526,7 @@ where
                             }
                         }
                         self.variables.pop();
+                        self.call_stack.pop();
                         return if !return_val.is_empty() { Ok(return_val) } else { Ok(output.join("\n")) };
                     }
 

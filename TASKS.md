@@ -7,10 +7,10 @@
 - [x] Wasm-bindgenによるRust-JS間の Uint8Array ゼロコピー転送の設定
 - [x] Rust側での panic_hook の設定（エラーをターミナルに表示するため）
 - [x] Comlink経由の非同期初期化シーケンスの実装
-- [ ] Worker内でのWasmメモリ割り当て上限の監視ロジック
-- [ ] Loggerの実装（RustのログをJSのコンソール/UIへ転送）
+- [x] Worker内でのWasmメモリ割り当て上限の監視ロジック
+- [x] Loggerの実装（RustのログをJSのコンソール/UIへ転送）
 - [ ] 実行タイムアウト管理（無限ループするスクリプトの強制終了機能）
-- [ ] Worker内での StorageManager の権限チェック
+- [x] Worker内での StorageManager の権限チェック
 - [ ] Wasmバイナリの Response.arrayBuffer() からのストリーミングコンパイル実装
 - [x] Rustの lazy_static を OnceCell (std) に置き換え（モダン化）
 
@@ -60,10 +60,10 @@
 - [x] Interpreter: 文字列結合演算の実装
 - [x] 組み込み関数: sleep(ms) の非同期エミュレーション
 - [x] 組み込み関数: http_get(url) (JSのfetch呼び出し)
-- [ ] 組み込み関数: json_parse(str) の実装
+- [x] 組み込み関数: json_parse(str) の実装
 - [x] スクリプト内での環境変数 ($PATH 等) の参照
-- [ ] スクリプトの構文チェックのみを行う lint モードの実装
-- [ ] 実行時スタックトレースの保存とエラー表示の改善
+- [x] スクリプトの構文チェックのみを行う lint モードの実装
+- [x] 実行時スタックトレースの保存とエラー表示の改善
 
 ## E. Terminal UX (xterm.js) (10タスク)
 - [x] iPadOSのソフトウェアキーボード表示時のリサイズ追従
