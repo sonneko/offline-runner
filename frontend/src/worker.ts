@@ -175,6 +175,8 @@ const api = {
             if (timerId !== null) {
                 clearTimeout(timerId);
             }
+            const { clear_interrupt } = await import('../../engine/pkg/engine.js');
+            clear_interrupt();
         }
     },
     async interrupt() {
