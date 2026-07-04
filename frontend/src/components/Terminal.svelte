@@ -9,14 +9,21 @@
     let terminalElement: HTMLElement;
     let term: Terminal;
     let fitAddon: FitAddon;
+    let fontSize = 14;
+    let isDarkMode = true;
     let input = '';
     let history: string[] = [];
     let historyIndex = -1;
+    let promptString = '$ ';
     const dispatch = createEventDispatcher();
 
     export function printLog(message: string) {
         term.writeln('\r\n' + message);
-        term.write('$ ' + input);
+        term.write(promptString + input);
+    }
+
+    export function setPrompt(newPrompt: string) {
+        promptString = newPrompt;
     }
 
     async function loadHistory() {
@@ -68,7 +75,7 @@
             input += completion;
             term.write(completion);
         } else if (matches.length > 1) {
-            term.write('\r\n' + matches.join('  ') + '\r\n$ ' + input);
+            term.write('\r\n' + matches.join('  ') + '\r\n' + promptString + input);
         }
     }
 
@@ -76,8 +83,11 @@
         history = await loadHistory();
         term = new Terminal({
             cursorBlink: true,
+            scrollback: 10000,
+            fontSize: fontSize,
             theme: {
-                background: '#1e1e1e'
+                background: '#1e1e1e',
+                foreground: '#ffffff'
             },
             macOptionIsMeta: true,
             rightClickSelectsWord: true
@@ -98,7 +108,7 @@
         });
 
         term.writeln('Welcome to iOS PWA Tool CLI');
-        term.write('\r\n$ ');
+        term.write('\r\n' + promptString);
 
         term.onData(async e => {
             switch (e) {
@@ -135,8 +145,17 @@
                         }
                         dispatch('commandExecuted');
                     }
+
+                    // Check if prompt was changed via env
+                    try {
+                        const newPrompt = await workerApi.executeCommand('echo $PROMPT');
+                        if (newPrompt && newPrompt.trim() !== '') {
+                            promptString = newPrompt.trim() + ' ';
+                        }
+                    } catch (e) {}
+
                     input = '';
-                    term.write('$ ');
+                    term.write(promptString);
                     break;
                 case '\u007F': // Backspace
                     if (input.length > 0) {
@@ -157,6 +176,24 @@
             }
         });
     });
+
+    function changeFontSize(delta: number) {
+        fontSize = Math.max(8, Math.min(32, fontSize + delta));
+        term.options.fontSize = fontSize;
+        setTimeout(() => fitAddon.fit(), 10);
+    }
+
+    function toggleTheme() {
+        isDarkMode = !isDarkMode;
+        term.options.theme = isDarkMode ? {
+            background: '#1e1e1e',
+            foreground: '#ffffff'
+        } : {
+            background: '#ffffff',
+            foreground: '#000000',
+            cursor: '#000000'
+        };
+    }
 </script>
 
 <div class="terminal-wrapper">
@@ -165,7 +202,11 @@
         <button on:touchstart|preventDefault={() => term.focus()} on:click={() => term.focus()}>Focus</button>
         <button on:touchstart|preventDefault={() => term.onData('\x1b')} on:click={() => term.onData('\x1b')}>Esc</button>
         <button on:touchstart|preventDefault={() => term.onData('\t')} on:click={() => term.onData('\t')}>Tab</button>
-        <button on:touchstart|preventDefault={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }} on:click={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }}>Ctrl+C</button>
+        <button on:touchstart|preventDefault={() => { workerApi.interrupt(); term.write('^C\r\n' + promptString); input = ''; }} on:click={() => { workerApi.interrupt(); term.write('^C\r\n' + promptString); input = ''; }}>Ctrl+C</button>
+        <div class="spacer"></div>
+        <button on:touchstart|preventDefault={() => changeFontSize(-1)} on:click={() => changeFontSize(-1)}>A-</button>
+        <button on:touchstart|preventDefault={() => changeFontSize(1)} on:click={() => changeFontSize(1)}>A+</button>
+        <button on:touchstart|preventDefault={toggleTheme} on:click={toggleTheme}>Theme</button>
     </div>
 </div>
 
@@ -201,5 +242,8 @@
     }
     .virtual-keys button:active {
         background: #555;
+    }
+    .spacer {
+        flex: 1;
     }
 </style>

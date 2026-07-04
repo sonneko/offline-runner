@@ -26,6 +26,13 @@
                             saveFile();
                             return true;
                         }
+                    },
+                    {
+                        key: "F12",
+                        run: () => {
+                            jumpToDefinition();
+                            return true;
+                        }
                     }
                 ]),
                 oneDark,
@@ -36,6 +43,34 @@
 
         return () => view.destroy();
     });
+
+    function jumpToDefinition() {
+        const state = view.state;
+        const selection = state.selection.main;
+        const line = state.doc.lineAt(selection.head);
+
+        // Very basic word extraction at cursor
+        const wordMatch = line.text.substring(0, selection.head - line.from).match(/([a-zA-Z0-9_]+)$/);
+        const wordMatchForward = line.text.substring(selection.head - line.from).match(/^([a-zA-Z0-9_]+)/);
+
+        let word = '';
+        if (wordMatch) word += wordMatch[1];
+        if (wordMatchForward) word += wordMatchForward[1];
+
+        if (word) {
+            const text = state.doc.toString();
+            // Look for 'function WORD' or 'WORD =' patterns in MSS
+            const regex = new RegExp(`(?:function\\s+${word}\\s*\\(|${word}\\s*=)`, 'g');
+            const match = regex.exec(text);
+
+            if (match) {
+                view.dispatch({
+                    selection: { anchor: match.index, head: match.index },
+                    scrollIntoView: true
+                });
+            }
+        }
+    }
 
     export function getContent() {
         return view.state.doc.toString();
@@ -50,11 +85,30 @@
     export async function loadFile(path: string) {
         if (!workerApi) return;
         currentPath = path;
-        const result = await workerApi.executeCommand(`cat "${path}"`);
-        if (!result.startsWith('cat: ')) {
-            setContent(result);
+
+        // Use stat to get file size
+        const statResult = await workerApi.executeCommand(`stat "${path}"`);
+        const sizeMatch = statResult.match(/Size:\s+(\d+)/);
+        let size = 0;
+        if (sizeMatch && sizeMatch[1]) {
+            size = parseInt(sizeMatch[1], 10);
+        }
+
+        // Lazy load for large files (e.g. > 500KB)
+        if (size > 500 * 1024) {
+            const headResult = await workerApi.executeCommand(`head -n 1000 "${path}"`);
+            if (!headResult.startsWith('head: ')) {
+                setContent(`// Large file lazy loaded (First 1000 lines). Total size: ${size} bytes.\n// Editing large files is limited in this view.\n\n` + headResult);
+            } else {
+                console.error(headResult);
+            }
         } else {
-            console.error(result);
+            const result = await workerApi.executeCommand(`cat "${path}"`);
+            if (!result.startsWith('cat: ')) {
+                setContent(result);
+            } else {
+                console.error(result);
+            }
         }
     }
 
