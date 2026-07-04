@@ -15,9 +15,25 @@
   let showCommandPalette = false;
   let commandInput = '';
   let commandInputEl: HTMLInputElement;
+  let storageUsageInfo = '';
 
   $: if (showCommandPalette && commandInputEl) {
       commandInputEl.focus();
+  }
+
+  async function updateStorageUsage() {
+      if (navigator.storage && navigator.storage.estimate) {
+          try {
+              const estimate = await navigator.storage.estimate();
+              if (estimate.usage !== undefined && estimate.quota !== undefined) {
+                  const usageMb = (estimate.usage / (1024 * 1024)).toFixed(2);
+                  const quotaMb = (estimate.quota / (1024 * 1024)).toFixed(2);
+                  storageUsageInfo = `Storage: ${usageMb} MB / ${quotaMb} MB`;
+              }
+          } catch (e) {
+              console.error("Failed to estimate storage", e);
+          }
+      }
   }
 
   onMount(async () => {
@@ -31,12 +47,20 @@
         }
     }));
 
+    updateStorageUsage();
+    // Periodically update storage usage
+    const storageInterval = setInterval(updateStorageUsage, 30000);
+
     window.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
             e.preventDefault();
             showCommandPalette = !showCommandPalette;
         }
     });
+
+    return () => {
+        clearInterval(storageInterval);
+    };
   });
 
   async function runScript() {
@@ -82,7 +106,12 @@
   <div class="top-bar">
     <button on:click={runScript}>Run MSS</button>
     <button on:click={showMermaid}>Demo Mermaid</button>
-    <div class="info">Press Cmd+P for Command Palette</div>
+    <div class="info">
+        {#if storageUsageInfo}
+            <span style="margin-right: 15px;">{storageUsageInfo}</span>
+        {/if}
+        Press Cmd+P for Command Palette
+    </div>
   </div>
   <div class="container">
     <div class="pane file-tree-pane">

@@ -21,7 +21,21 @@ const api = {
             };
         }
 
-        await init();
+        // Stream compile Wasm if possible, fallback to fetch + instantiate
+        if (typeof WebAssembly.instantiateStreaming === 'function') {
+            try {
+                await init(new URL('../../engine/pkg/engine_bg.wasm', import.meta.url));
+            } catch (e) {
+                console.warn('Wasm instantiateStreaming failed, falling back to arrayBuffer:', e);
+                const response = await fetch(new URL('../../engine/pkg/engine_bg.wasm', import.meta.url));
+                const buffer = await response.arrayBuffer();
+                await init(buffer);
+            }
+        } else {
+            const response = await fetch(new URL('../../engine/pkg/engine_bg.wasm', import.meta.url));
+            const buffer = await response.arrayBuffer();
+            await init(buffer);
+        }
         setup_engine();
 
         // Initialize SharedArrayBuffer for sync I/O (1MB for data)

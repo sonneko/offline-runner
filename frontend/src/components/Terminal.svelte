@@ -78,12 +78,20 @@
             cursorBlink: true,
             theme: {
                 background: '#1e1e1e'
-            }
+            },
+            macOptionIsMeta: true,
+            rightClickSelectsWord: true
         });
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         term.open(terminalElement);
         fitAddon.fit();
+
+        term.onSelectionChange(() => {
+            if (term.hasSelection() && navigator.clipboard) {
+                navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            }
+        });
 
         window.addEventListener('resize', () => {
             fitAddon.fit();
@@ -153,11 +161,11 @@
 
 <div class="terminal-wrapper">
     <div bind:this={terminalElement} class="terminal-container"></div>
-    <div class="virtual-keys">
-        <button on:click={() => term.focus()}>Focus</button>
-        <button on:click={() => term.onData('\x1b')}>Esc</button>
-        <button on:click={() => term.onData('\t')}>Tab</button>
-        <button on:click={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }}>Ctrl+C</button>
+    <div class="virtual-keys" on:touchstart|preventDefault={() => {}}>
+        <button on:touchstart|preventDefault={() => term.focus()} on:click={() => term.focus()}>Focus</button>
+        <button on:touchstart|preventDefault={() => term.onData('\x1b')} on:click={() => term.onData('\x1b')}>Esc</button>
+        <button on:touchstart|preventDefault={() => term.onData('\t')} on:click={() => term.onData('\t')}>Tab</button>
+        <button on:touchstart|preventDefault={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }} on:click={() => { workerApi.interrupt(); term.write('^C\r\n$ '); input = ''; }}>Ctrl+C</button>
     </div>
 </div>
 
@@ -186,8 +194,12 @@
         background: #444;
         color: white;
         border: none;
-        padding: 4px 8px;
-        border-radius: 3px;
-        font-size: 12px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 14px;
+        touch-action: manipulation; /* Prevent double-tap zoom for better tap response */
+    }
+    .virtual-keys button:active {
+        background: #555;
     }
 </style>
