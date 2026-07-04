@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import init, { execute_command, run_mss, init_vfs, setup_engine, get_wasm_memory_size } from '../../engine/pkg/engine.js';
+import init, { execute_command, run_mss, init_vfs, setup_engine, get_wasm_memory_size, lint_mss } from '../../engine/pkg/engine.js';
 
 const STATE_IDLE = 0;
 const STATE_REQ = 1;
@@ -174,6 +174,13 @@ const api = {
         }
         Atomics.store(sharedInt32, 0, STATE_IDLE);
         throw new Error("Sync Truncate Failed");
+    },
+    async lintMss(code: string) {
+        try {
+            return lint_mss(code);
+        } catch (e) {
+            return `Error: ${e}`;
+        }
     },
     async runMss(code: string, timeoutMs: number = 0) {
         let timerId: any = null;
