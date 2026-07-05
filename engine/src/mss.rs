@@ -444,6 +444,9 @@ where
                         let val = self.evaluate_expr(condition.clone()).await?;
                         !val.is_empty() && val != "false" && val != "0"
                     } {
+                        if self.cancel_flag.load(Ordering::SeqCst) {
+                            return Err("Interrupted".to_string());
+                        }
                         for s in &body {
                             let res = self.execute_statement(s.clone()).await?;
                             if res.starts_with("__RETURN__:") {
@@ -461,6 +464,9 @@ where
                     let items: Vec<&str> = list_val.split_whitespace().collect();
                     let mut output = Vec::new();
                     for item in items {
+                        if self.cancel_flag.load(Ordering::SeqCst) {
+                            return Err("Interrupted".to_string());
+                        }
                         self.set_var(var.clone(), item.to_string());
                         for s in &body {
                             let res = self.execute_statement(s.clone()).await?;
@@ -516,6 +522,9 @@ where
                         let mut output: Vec<String> = Vec::new();
                         let mut return_val = String::new();
                         for s in func.body {
+                            if self.cancel_flag.load(Ordering::SeqCst) {
+                                return Err("Interrupted".to_string());
+                            }
                             let res = self.execute_statement(s).await?;
                             if res.starts_with("__RETURN__:") {
                                 return_val = res["__RETURN__:".len()..].to_string();

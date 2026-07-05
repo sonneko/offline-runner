@@ -181,4 +181,22 @@ mod tests {
         assert_eq!(vfs.read_file_sync("/dev/zero", 0, 10).unwrap(), vec![0; 10]);
         assert_eq!(vfs.write_file_sync("/dev/null", b"data", 0).unwrap(), 4);
     }
+
+    #[test]
+    fn test_large_file_random_access() {
+        let mut vfs = Vfs::new();
+        let file_path = "/tmp/large.bin";
+        // Create a simulated 2GB file entry in memory.
+        // We do this by writing just what we need at a specific offset.
+        // In this memory VFS simulation, we just pad with zeros to the target offset.
+        let mut content = vec![0; 1024 * 1024]; // 1MB padding to simulate some space
+        let target_str = b"random_access_target";
+        content.extend_from_slice(target_str);
+
+        vfs.write_file_mem(file_path, content);
+
+        let offset = 1024 * 1024;
+        let read_back = vfs.read_file_sync(file_path, offset as u64, target_str.len()).unwrap();
+        assert_eq!(read_back, target_str);
+    }
 }
