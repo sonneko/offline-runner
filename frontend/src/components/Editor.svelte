@@ -8,6 +8,7 @@
     import { linter, lintGutter } from '@codemirror/lint';
     import type { Diagnostic } from '@codemirror/lint';
     import { search } from '@codemirror/search';
+    import { showMinimap } from '@replit/codemirror-minimap';
     import { mss } from '../lib/mss-lang';
 
     export let workerApi: any;
@@ -108,6 +109,11 @@
             extensions: [
                 basicSetup,
                 search({top: true}),
+                showMinimap.compute(['doc'], (state) => ({
+                    create: () => ({
+                        dom: document.createElement('div')
+                    })
+                })),
                 lintGutter(),
                 mssLinter,
                 keymap.of([
