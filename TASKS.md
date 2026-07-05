@@ -90,11 +90,11 @@
 - [x] 検索・置換パネルの実装
 
 ## G. SQLite Wasm 統合 (8タスク)
-- [ ] SQLite WasmバイナリのWorkerへのロード
-- [ ] OPFS VFS (公式) との連携設定
-- [ ] SQL実行用インターフェースのJS実装
-- [ ] CLIコマンド sqlite "QUERY" の実装
-- [ ] クエリ結果のテーブル表示 (ASCII Table) 実装
+- [x] SQLite WasmバイナリのWorkerへのロード
+- [x] OPFS VFS (公式) との連携設定
+- [x] SQL実行用インターフェースのJS実装
+- [x] CLIコマンド sqlite "QUERY" の実装
+- [x] クエリ結果のテーブル表示 (ASCII Table) 実装
 - [ ] 巨大な結果セットに対するストリーミングUI表示
 - [ ] DBファイルのインポート/エクスポート機能
 - [ ] SQLiteの explain query plan サポート

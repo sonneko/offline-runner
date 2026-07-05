@@ -10,6 +10,10 @@ let sharedBuffer: SharedArrayBuffer;
 let sharedInt32: Int32Array;
 let dataBuffer: Uint8Array;
 let ioWorker: Worker;
+let sqliteWorker: Worker;
+
+let queryIdCounter = 0;
+const pendingQueries = new Map<number, { resolve: Function, reject: Function }>();
 
 const api = {
     async init(logCallback?: (msg: string) => void) {
@@ -45,6 +49,23 @@ const api = {
 
         // Initialize I/O Worker
         ioWorker = new Worker(new URL('./io-worker.ts', import.meta.url), { type: 'module' });
+
+        // Initialize SQLite Worker
+        sqliteWorker = new Worker(new URL('./sqlite-worker.ts', import.meta.url), { type: 'module' });
+        sqliteWorker.onmessage = (e) => {
+            if (e.data.type === 'result') {
+                const pending = pendingQueries.get(e.data.id);
+                if (pending) {
+                    if (e.data.error) {
+                        pending.reject(new Error(e.data.error));
+                    } else {
+                        pending.resolve(e.data.rows);
+                    }
+                    pendingQueries.delete(e.data.id);
+                }
+            }
+        };
+        sqliteWorker.postMessage({ type: 'init' });
 
         // Check storage persist permission
         if (navigator.storage && navigator.storage.persist) {
@@ -98,11 +119,54 @@ const api = {
         return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmdLine: string) {
+        if (cmdLine.trim().startsWith('sqlite ')) {
+            const sql = cmdLine.substring(7).trim();
+            // remove surrounding quotes if any
+            const cleanedSql = sql.replace(/^["'](.*)["']$/, '$1');
+            try {
+                const rows = await api.querySqlite(cleanedSql);
+                if (!rows || rows.length === 0) return 'Query executed successfully. (0 rows)';
+
+                // Generate ASCII table for rows
+                const keys = Object.keys(rows[0]);
+                const colWidths = keys.map(k => k.length);
+
+                rows.forEach(row => {
+                    keys.forEach((k, i) => {
+                        const valLen = String(row[k]).length;
+                        if (valLen > colWidths[i]) colWidths[i] = valLen;
+                    });
+                });
+
+                const buildSeparator = () => '+' + colWidths.map(w => '-'.repeat(w + 2)).join('+') + '+';
+                const buildRow = (rowData: any) => '|' + keys.map((k, i) => ' ' + String(rowData[k]).padEnd(colWidths[i], ' ') + ' ').join('|') + '|';
+
+                let output = buildSeparator() + '\n';
+                output += '|' + keys.map((k, i) => ' ' + k.padEnd(colWidths[i], ' ') + ' ').join('|') + '|\n';
+                output += buildSeparator() + '\n';
+
+                rows.forEach(row => {
+                    output += buildRow(row) + '\n';
+                });
+                output += buildSeparator();
+
+                return output;
+            } catch (e: any) {
+                return `SQLite Error: ${e.message}`;
+            }
+        }
         try {
             return await execute_command(cmdLine);
         } catch (e) {
             return `Error: ${e}`;
         }
+    },
+    async querySqlite(sql: string): Promise<any[]> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'query', sql, id });
+        });
     },
     // Sync I/O call for Rust (to be called via JS bridge)
     readSync(path: string, offset: number, length: number): Uint8Array {
