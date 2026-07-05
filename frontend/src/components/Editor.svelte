@@ -7,6 +7,7 @@
     import { oneDark } from '@codemirror/theme-one-dark';
     import { linter, lintGutter } from '@codemirror/lint';
     import type { Diagnostic } from '@codemirror/lint';
+    import { search } from '@codemirror/search';
     import { mss } from '../lib/mss-lang';
 
     export let workerApi: any;
@@ -106,6 +107,7 @@
             doc: '',
             extensions: [
                 basicSetup,
+                search({top: true}),
                 lintGutter(),
                 mssLinter,
                 keymap.of([
