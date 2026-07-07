@@ -100,14 +100,14 @@
 - [x] SQLiteの explain query plan サポート
 
 ## H. Mermaid.js & Preview (8タスク)
-- [ ] Mermaidレンダリング専用の隠しiframe/Workerの構築
-- [ ] プレビュー更新のデバウンス（入力停止500ms後）の実装
+- [x] Mermaidレンダリング専用の隠しiframe/Workerの構築
+- [x] プレビュー更新のデバウンス（入力停止500ms後）の実装
 - [ ] 生成SVGのハッシュキャッシュ（OPFS保存）
-- [ ] SVGプレビューのピンチズーム/パン機能
-- [ ] Mermaidエラー時のエラーメッセージUI表示
-- [ ] ダークモード/ライトモードに応じたMermaidテーマ変更
-- [ ] PDF生成（PDF-lib）によるMermaid図面のPDF化
-- [ ] プレビュー画面のフルスクリーン切り替え
+- [x] SVGプレビューのピンチズーム/パン機能
+- [x] Mermaidエラー時のエラーメッセージUI表示
+- [x] ダークモード/ライトモードに応じたMermaidテーマ変更
+- [x] PDF生成（PDF-lib）によるMermaid図面のPDF化
+- [x] プレビュー画面のフルスクリーン切り替え
 
 ## I. オフラインAI・翻訳 (7タスク)
 - [ ] Transformers.js の初期化とモデルDL進捗バーの実装

@@ -193,6 +193,7 @@
             foreground: '#000000',
             cursor: '#000000'
         };
+        dispatch('themeChanged', { isDarkMode });
     }
 </script>
 

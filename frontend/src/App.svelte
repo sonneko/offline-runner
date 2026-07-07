@@ -16,6 +16,7 @@
   let commandInput = '';
   let commandInputEl: HTMLInputElement;
   let storageUsageInfo = '';
+  let theme: 'light' | 'dark' = 'dark';
 
   $: if (showCommandPalette && commandInputEl) {
       commandInputEl.focus();
@@ -80,6 +81,10 @@
       previewType = 'mermaid';
   }
 
+  function showPdf() {
+      previewType = 'pdf';
+  }
+
   async function handleCommand(e: KeyboardEvent) {
       if (e.key === 'Enter' && workerApi) {
           const result = await workerApi.executeCommand(commandInput.trim());
@@ -100,12 +105,17 @@
   function handleFileSave() {
       if (fileTree) fileTree.refresh();
   }
+
+  function handleThemeChange(e: CustomEvent) {
+      theme = e.detail.isDarkMode ? 'dark' : 'light';
+  }
 </script>
 
 <main>
   <div class="top-bar">
     <button on:click={runScript}>Run MSS</button>
     <button on:click={showMermaid}>Demo Mermaid</button>
+    <button on:click={showPdf}>Generate PDF</button>
     <div class="info">
         {#if storageUsageInfo}
             <span style="margin-right: 15px;">{storageUsageInfo}</span>
@@ -123,12 +133,12 @@
                 <Editor bind:this={editor} {workerApi} on:save={handleFileSave} />
             </div>
             <div class="pane preview-pane">
-                <Preview content={previewContent} type={previewType} />
+                <Preview content={previewContent} type={previewType} {theme} />
             </div>
         </div>
         <div class="pane terminal-pane">
             {#if workerApi}
-                <Terminal bind:this={terminal} {workerApi} on:commandExecuted={() => fileTree?.refresh()} />
+                <Terminal bind:this={terminal} {workerApi} on:commandExecuted={() => fileTree?.refresh()} on:themeChanged={handleThemeChange} />
             {/if}
         </div>
     </div>
