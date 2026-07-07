@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { PDFDocument, rgb } from 'pdf-lib';
     import svgPanZoom from 'svg-pan-zoom';
+    import mermaid from 'mermaid';
 
     export let content = '';
     export let type: 'mermaid' | 'pdf' | 'text' = 'text';
@@ -9,12 +10,12 @@
 
     let previewElement: HTMLElement;
     let svgContainer: HTMLElement;
-    let mermaidWorker: Worker;
     let debounceTimer: any;
     let renderId = 0;
     let errorMessage = '';
     let isFullscreen = false;
     let panZoomInstance: any = null;
+    let lastRenderedSvg = '';
 
     $: if (previewElement && type === 'mermaid' && content) {
         clearTimeout(debounceTimer);
@@ -46,11 +47,22 @@
                 color: rgb(0, 0, 0),
             });
 
-            const lines = content.split('\n');
-            let y = page.getHeight() - 150;
-            for (let i = 0; i < Math.min(lines.length, 30); i++) {
-                page.drawText(lines[i] || '', { x: 50, y, size: 12 });
-                y -= 20;
+            if (lastRenderedSvg) {
+                 // Try to render the SVG directly if possible, or fallback to text if unsupported via plain pdf-lib without extensions
+                 // For now, we print the raw MSS string as requested
+                 const lines = content.split('\n');
+                 let y = page.getHeight() - 150;
+                 for (let i = 0; i < Math.min(lines.length, 30); i++) {
+                     page.drawText(lines[i] || '', { x: 50, y, size: 12 });
+                     y -= 20;
+                 }
+            } else {
+                const lines = content.split('\n');
+                let y = page.getHeight() - 150;
+                for (let i = 0; i < Math.min(lines.length, 30); i++) {
+                    page.drawText(lines[i] || '', { x: 50, y, size: 12 });
+                    y -= 20;
+                }
             }
 
             const pdfBytes = await pdfDoc.save();
@@ -63,43 +75,38 @@
     }
 
     async function renderMermaid() {
-        if (!mermaidWorker) return;
         renderId++;
         errorMessage = '';
-        mermaidWorker.postMessage({ id: renderId, content, theme: theme === 'dark' ? 'dark' : 'default' });
-    }
+        try {
+            mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' });
+            const { svg } = await mermaid.render('mermaid-svg-' + renderId, content);
 
-    onMount(() => {
-        mermaidWorker = new Worker(new URL('../mermaid-worker.ts', import.meta.url), { type: 'module' });
-        mermaidWorker.onmessage = (e) => {
-            if (e.data.id === renderId) {
-                if (e.data.error) {
-                    errorMessage = e.data.error;
-                } else if (e.data.svg && svgContainer) {
-                    if (panZoomInstance) {
-                        panZoomInstance.destroy();
-                        panZoomInstance = null;
-                    }
-                    svgContainer.innerHTML = e.data.svg;
-                    const svgElement = svgContainer.querySelector('svg');
-                    if (svgElement) {
-                        svgElement.style.width = '100%';
-                        svgElement.style.height = '100%';
-                        panZoomInstance = svgPanZoom(svgElement, {
-                            zoomEnabled: true,
-                            controlIconsEnabled: true,
-                            fit: true,
-                            center: true
-                        });
-                    }
+            if (svgContainer) {
+                if (panZoomInstance) {
+                    panZoomInstance.destroy();
+                    panZoomInstance = null;
+                }
+                svgContainer.innerHTML = svg;
+                lastRenderedSvg = svg;
+                const svgElement = svgContainer.querySelector('svg');
+                if (svgElement) {
+                    svgElement.style.width = '100%';
+                    svgElement.style.height = '100%';
+                    panZoomInstance = svgPanZoom(svgElement, {
+                        zoomEnabled: true,
+                        controlIconsEnabled: true,
+                        fit: true,
+                        center: true
+                    });
                 }
             }
-        };
-    });
+        } catch (err: any) {
+            errorMessage = err.message || err.toString();
+        }
+    }
 
     onDestroy(() => {
         if (panZoomInstance) panZoomInstance.destroy();
-        if (mermaidWorker) mermaidWorker.terminate();
         clearTimeout(debounceTimer);
     });
 

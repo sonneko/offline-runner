@@ -11,12 +11,16 @@ let sharedInt32: Int32Array;
 let dataBuffer: Uint8Array;
 let ioWorker: Worker;
 let sqliteWorker: Worker;
+let aiWorker: Worker;
 
 let queryIdCounter = 0;
 const pendingQueries = new Map<number, { resolve: Function, reject: Function }>();
+const pendingAiRequests = new Map<number, { resolve: Function, reject: Function }>();
+let aiProgressCallback: ((msg: string) => void) | null = null;
 
 const api = {
-    async init(logCallback?: (msg: string) => void) {
+    async init(logCallback?: (msg: string) => void, progressCallback?: (msg: string) => void) {
+        aiProgressCallback = progressCallback || null;
         if (logCallback) {
             const originalConsoleLog = console.log;
             console.log = (...args) => {
@@ -66,6 +70,32 @@ const api = {
             }
         };
         sqliteWorker.postMessage({ type: 'init' });
+
+        // Initialize AI Worker
+        aiWorker = new Worker(new URL('./ai-worker.ts', import.meta.url), { type: 'module' });
+        aiWorker.onmessage = (e) => {
+            if (e.data.type === 'progress') {
+                if (aiProgressCallback) aiProgressCallback(e.data.message);
+            } else if (e.data.type === 'ready') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.resolve();
+                    pendingAiRequests.delete(e.data.id);
+                }
+            } else if (e.data.type === 'result') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.resolve(e.data.text);
+                    pendingAiRequests.delete(e.data.id);
+                }
+            } else if (e.data.type === 'error') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.reject(new Error(e.data.error));
+                    pendingAiRequests.delete(e.data.id);
+                }
+            }
+        };
 
         // Check storage persist permission
         if (navigator.storage && navigator.storage.persist) {
@@ -119,6 +149,15 @@ const api = {
         return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmdLine: string) {
+        if (cmdLine.trim().startsWith('translate ')) {
+            const textToTranslate = cmdLine.substring(10).trim().replace(/^["'](.*)["']$/, '$1');
+            try {
+                const result = await api.translateText(textToTranslate);
+                return `Translation: ${result}`;
+            } catch (e: any) {
+                return `Translation Error: ${e.message}`;
+            }
+        }
         if (cmdLine.trim().startsWith('sqlite ')) {
             const sql = cmdLine.substring(7).trim();
             // remove surrounding quotes if any
@@ -218,6 +257,20 @@ const api = {
             const id = queryIdCounter++;
             pendingQueries.set(id, { resolve, reject });
             sqliteWorker.postMessage({ type: 'import', data, id });
+        });
+    },
+    async initAiModel(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingAiRequests.set(id, { resolve, reject });
+            aiWorker.postMessage({ type: 'init', id });
+        });
+    },
+    async translateText(text: string, targetLang: string = 'jpn_Jpan'): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingAiRequests.set(id, { resolve, reject });
+            aiWorker.postMessage({ type: 'translate', text, targetLang, id });
         });
     },
     // Sync I/O call for Rust (to be called via JS bridge)
