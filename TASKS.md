@@ -95,9 +95,9 @@
 - [x] SQL実行用インターフェースのJS実装
 - [x] CLIコマンド sqlite "QUERY" の実装
 - [x] クエリ結果のテーブル表示 (ASCII Table) 実装
-- [ ] 巨大な結果セットに対するストリーミングUI表示
-- [ ] DBファイルのインポート/エクスポート機能
-- [ ] SQLiteの explain query plan サポート
+- [x] 巨大な結果セットに対するストリーミングUI表示
+- [x] DBファイルのインポート/エクスポート機能
+- [x] SQLiteの explain query plan サポート
 
 ## H. Mermaid.js & Preview (8タスク)
 - [ ] Mermaidレンダリング専用の隠しiframe/Workerの構築

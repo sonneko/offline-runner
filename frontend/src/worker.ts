@@ -53,13 +53,13 @@ const api = {
         // Initialize SQLite Worker
         sqliteWorker = new Worker(new URL('./sqlite-worker.ts', import.meta.url), { type: 'module' });
         sqliteWorker.onmessage = (e) => {
-            if (e.data.type === 'result') {
+            if (e.data.type === 'result' || e.data.type === 'export_result' || e.data.type === 'import_result') {
                 const pending = pendingQueries.get(e.data.id);
                 if (pending) {
                     if (e.data.error) {
                         pending.reject(new Error(e.data.error));
                     } else {
-                        pending.resolve(e.data.rows);
+                        pending.resolve(e.data.data !== undefined ? e.data.data : (e.data.rows !== undefined ? e.data.rows : e.data.success));
                     }
                     pendingQueries.delete(e.data.id);
                 }
@@ -123,15 +123,48 @@ const api = {
             const sql = cmdLine.substring(7).trim();
             // remove surrounding quotes if any
             const cleanedSql = sql.replace(/^["'](.*)["']$/, '$1');
+
+            if (cleanedSql === '.export') {
+                try {
+                    const data = await api.exportSqliteDb();
+                    const b64 = btoa(String.fromCharCode.apply(null, Array.from(data)));
+                    return `Exported DB:\n${b64}`;
+                } catch (e: any) {
+                    return `SQLite Export Error: ${e.message}`;
+                }
+            }
+
+            if (cleanedSql.startsWith('.import ')) {
+                try {
+                    const b64 = cleanedSql.substring(8).trim();
+                    const binaryString = atob(b64);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    await api.importSqliteDb(bytes);
+                    return 'SQLite DB imported successfully.';
+                } catch (e: any) {
+                    return `SQLite Import Error: ${e.message}`;
+                }
+            }
+
+            let finalSql = cleanedSql;
+            if (cleanedSql.startsWith('explain ')) {
+                finalSql = 'EXPLAIN QUERY PLAN ' + cleanedSql.substring(8);
+            }
+
             try {
-                const rows = await api.querySqlite(cleanedSql);
+                const rows = await api.querySqlite(finalSql);
                 if (!rows || rows.length === 0) return 'Query executed successfully. (0 rows)';
 
                 // Generate ASCII table for rows
                 const keys = Object.keys(rows[0]);
                 const colWidths = keys.map(k => k.length);
 
-                rows.forEach(row => {
+                // Only measure first 1000 rows to prevent blocking the UI for huge datasets
+                const sampleRows = rows.slice(0, 1000);
+                sampleRows.forEach(row => {
                     keys.forEach((k, i) => {
                         const valLen = String(row[k]).length;
                         if (valLen > colWidths[i]) colWidths[i] = valLen;
@@ -145,9 +178,14 @@ const api = {
                 output += '|' + keys.map((k, i) => ' ' + k.padEnd(colWidths[i], ' ') + ' ').join('|') + '|\n';
                 output += buildSeparator() + '\n';
 
-                rows.forEach(row => {
+                const maxRowsToDisplay = 1000;
+                rows.slice(0, maxRowsToDisplay).forEach(row => {
                     output += buildRow(row) + '\n';
                 });
+
+                if (rows.length > maxRowsToDisplay) {
+                    output += `| ... ${rows.length - maxRowsToDisplay} more rows omitted for streaming performance ... |\n`;
+                }
                 output += buildSeparator();
 
                 return output;
@@ -166,6 +204,20 @@ const api = {
             const id = queryIdCounter++;
             pendingQueries.set(id, { resolve, reject });
             sqliteWorker.postMessage({ type: 'query', sql, id });
+        });
+    },
+    async exportSqliteDb(): Promise<Uint8Array> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'export', id });
+        });
+    },
+    async importSqliteDb(data: Uint8Array): Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'import', data, id });
         });
     },
     // Sync I/O call for Rust (to be called via JS bridge)
