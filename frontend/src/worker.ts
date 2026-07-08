@@ -158,6 +158,41 @@ const api = {
                 return `Translation Error: ${e.message}`;
             }
         }
+        if (cmdLine.trim().startsWith('generate ')) {
+            const promptStr = cmdLine.substring(9).trim().replace(/^["'](.*)["']$/, '$1');
+            try {
+                const result = await api.generateCode(promptStr);
+                return `Generated Code:\n${result}`;
+            } catch (e: any) {
+                return `Generation Error: ${e.message}`;
+            }
+        }
+        if (cmdLine.trim().startsWith('ask ')) {
+            // Local RAG implementation logic: search and augment prompt
+            const promptStr = cmdLine.substring(4).trim().replace(/^["'](.*)["']$/, '$1');
+            try {
+                // Look for related files via a mock regex-based search, or just cat everything
+                const fileListResult = await execute_command("ls -a");
+                const files = fileListResult.replace(/\x1b\[[0-9;]*m/g, '').split(/\s+/).filter(f => f.length > 0 && f !== '.' && f !== '..');
+                let context = "";
+                for (const file of files) {
+                     // Check file size, skip large ones
+                     const statResult = await execute_command(`stat "${file}"`);
+                     const sizeMatch = statResult.match(/Size:\s+(\d+)/);
+                     if (sizeMatch && parseInt(sizeMatch[1], 10) < 50000) {
+                         const fileContent = await execute_command(`cat "${file}"`);
+                         if (!fileContent.startsWith('cat: ')) {
+                             context += `--- File: ${file} ---\n${fileContent}\n\n`;
+                         }
+                     }
+                }
+                const augmentedPrompt = `Context:\n${context.slice(0, 4000)}\n\nUser Question:\n${promptStr}`;
+                const result = await api.generateCode(augmentedPrompt);
+                return `AI Response:\n${result}`;
+            } catch (e: any) {
+                return `RAG Error: ${e.message}`;
+            }
+        }
         if (cmdLine.trim().startsWith('sqlite ')) {
             const sql = cmdLine.substring(7).trim();
             // remove surrounding quotes if any
@@ -271,6 +306,13 @@ const api = {
             const id = queryIdCounter++;
             pendingAiRequests.set(id, { resolve, reject });
             aiWorker.postMessage({ type: 'translate', text, targetLang, id });
+        });
+    },
+    async generateCode(prompt: string): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingAiRequests.set(id, { resolve, reject });
+            aiWorker.postMessage({ type: 'generate', prompt, id });
         });
     },
     // Sync I/O call for Rust (to be called via JS bridge)

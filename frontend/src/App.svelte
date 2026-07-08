@@ -22,6 +22,8 @@
       commandInputEl.focus();
   }
 
+  let showStorageWarning = false;
+
   async function updateStorageUsage() {
       if (navigator.storage && navigator.storage.estimate) {
           try {
@@ -30,6 +32,13 @@
                   const usageMb = (estimate.usage / (1024 * 1024)).toFixed(2);
                   const quotaMb = (estimate.quota / (1024 * 1024)).toFixed(2);
                   storageUsageInfo = `Storage: ${usageMb} MB / ${quotaMb} MB`;
+
+                  // Trigger warning if using > 90% of quota and at least 50MB is consumed (to prevent spam on tiny quotas)
+                  if (estimate.usage > 50 * 1024 * 1024 && (estimate.usage / estimate.quota) > 0.90) {
+                      showStorageWarning = true;
+                  } else {
+                      showStorageWarning = false;
+                  }
               }
           } catch (e) {
               console.error("Failed to estimate storage", e);
@@ -147,6 +156,27 @@
   function handleDragOver(e: DragEvent) {
       e.preventDefault();
   }
+
+  // Handle Web Share Target API
+  onMount(() => {
+      const url = new URL(window.location.href);
+      const sharedText = url.searchParams.get('text');
+      const sharedTitle = url.searchParams.get('title');
+      if (sharedText || sharedTitle) {
+          const safeName = (sharedTitle || 'shared_snippet').replace(/[^a-zA-Z0-9.-]/g, '_') + '.txt';
+          const content = sharedText || sharedTitle || '';
+          setTimeout(async () => {
+              if (workerApi) {
+                  await workerApi.executeCommand(`write "${safeName}" "${content.replace(/"/g, '\\"')}"`);
+                  if (fileTree) fileTree.refresh();
+                  if (editor) await editor.loadFile(safeName);
+              }
+          }, 1000);
+
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+      }
+  });
 </script>
 
 <main on:drop={handleDrop} on:dragover={handleDragOver}>
@@ -192,6 +222,17 @@
                 on:keydown={handleCommand}
                 bind:this={commandInputEl}
             />
+        </div>
+    </div>
+  {/if}
+
+  {#if showStorageWarning}
+    <div class="storage-warning-overlay">
+        <div class="storage-warning-dialog">
+            <h3>⚠️ Storage Warning</h3>
+            <p>You are approaching your device's OPFS storage quota limit.</p>
+            <p>Please use <code>rm</code> commands to delete unused files, or export your SQLite database to clear up space to avoid data loss.</p>
+            <button on:click={() => showStorageWarning = false}>Dismiss</button>
         </div>
     </div>
   {/if}
@@ -280,5 +321,40 @@
       color: white;
       padding: 8px;
       outline: none;
+  }
+  .storage-warning-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 200;
+  }
+  .storage-warning-dialog {
+      background: #2b0000;
+      border: 2px solid #ff4444;
+      border-radius: 8px;
+      padding: 20px;
+      width: 400px;
+      max-width: 90%;
+      box-shadow: 0 4px 15px rgba(255,0,0,0.2);
+  }
+  .storage-warning-dialog h3 {
+      margin-top: 0;
+      color: #ff8888;
+  }
+  .storage-warning-dialog button {
+      background: #444;
+      color: white;
+      border: 1px solid #666;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 15px;
+      float: right;
+  }
+  .storage-warning-dialog button:hover {
+      background: #555;
   }
 </style>
