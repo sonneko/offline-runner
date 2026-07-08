@@ -64,6 +64,11 @@
         setTimeout(() => updateStorageUsage(), 2000);
     });
 
+    // Restore editor session tabs
+    if (editor) {
+        editor.restoreSession();
+    }
+
     window.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
             e.preventDefault();
@@ -124,9 +129,27 @@
   function handleThemeChange(e: CustomEvent) {
       theme = e.detail.isDarkMode ? 'dark' : 'light';
   }
+
+  async function handleDrop(e: DragEvent) {
+      e.preventDefault();
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+          const file = e.dataTransfer.files[0];
+          const text = await file.text();
+          const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          if (workerApi) {
+              await workerApi.executeCommand(`write "${safeName}" "${text.replace(/"/g, '\\"')}"`);
+              if (fileTree) fileTree.refresh();
+              if (editor) await editor.loadFile(safeName);
+          }
+      }
+  }
+
+  function handleDragOver(e: DragEvent) {
+      e.preventDefault();
+  }
 </script>
 
-<main>
+<main on:drop={handleDrop} on:dragover={handleDragOver}>
   <div class="top-bar">
     <button on:click={runScript}>Run MSS</button>
     <button on:click={showMermaid}>Demo Mermaid</button>
@@ -148,7 +171,7 @@
                 <Editor bind:this={editor} {workerApi} on:save={handleFileSave} />
             </div>
             <div class="pane preview-pane">
-                <Preview content={previewContent} type={previewType} {theme} />
+                <Preview {workerApi} content={previewContent} type={previewType} {theme} />
             </div>
         </div>
         <div class="pane terminal-pane">

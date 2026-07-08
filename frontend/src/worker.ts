@@ -377,11 +377,22 @@ const api = {
     async saveToCache(key: string, data: string) {
         const path = `.cache/mermaid/${key}.svg`;
         try {
-            // We can use the write command we'll add to execute_command
-            // Or use direct VFS access if exposed
-            return await execute_command(`write "${path}" "${data}"`);
+            await execute_command(`mkdir -p .cache/mermaid`);
+            return await execute_command(`echo '${data}' > "${path}"`);
         } catch (e) {
             return `Cache Error: ${e}`;
+        }
+    },
+    async loadFromCache(key: string): Promise<string | null> {
+        const path = `.cache/mermaid/${key}.svg`;
+        try {
+            const result = await execute_command(`cat "${path}"`);
+            if (!result.startsWith('cat: ')) {
+                return result;
+            }
+            return null;
+        } catch (e) {
+            return null;
         }
     }
 };

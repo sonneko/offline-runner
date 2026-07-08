@@ -102,7 +102,7 @@
 ## H. Mermaid.js & Preview (8タスク)
 - [x] Mermaidレンダリング専用の隠しiframe/Workerの構築
 - [x] プレビュー更新のデバウンス（入力停止500ms後）の実装
-- [ ] 生成SVGのハッシュキャッシュ（OPFS保存）
+- [x] 生成SVGのハッシュキャッシュ（OPFS保存）
 - [x] SVGプレビューのピンチズーム/パン機能
 - [x] Mermaidエラー時のエラーメッセージUI表示
 - [x] ダークモード/ライトモードに応じたMermaidテーマ変更
@@ -119,10 +119,10 @@
 - [ ] ローカルRAG（OPFS内のファイルをAIが読む）の基礎実験
 
 ## J. PWA / デプロイ / 安定化 (10タスク)
-- [ ] Service WorkerによるWasm/JSの完全キャッシュ
-- [ ] WebManifestの設定（iPad landscape固定）
-- [ ] アプリ起動時の前回セッション（開いていたファイル等）復元
-- [ ] 「ファイル」アプリからのドラッグ＆ドロップ受け入れ
+- [x] Service WorkerによるWasm/JSの完全キャッシュ
+- [x] WebManifestの設定（iPad landscape固定）
+- [x] アプリ起動時の前回セッション（開いていたファイル等）復元
+- [x] 「ファイル」アプリからのドラッグ＆ドロップ受け入れ
 - [ ] PWAの「シェアターゲット」設定（ファイルをこのアプリで開く）
 - [x] ユニットテスト（Rust側：VFSロジック）
 - [ ] E2Eテスト（Playwright：CLI操作）

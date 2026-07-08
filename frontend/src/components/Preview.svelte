@@ -4,6 +4,7 @@
     import svgPanZoom from 'svg-pan-zoom';
     import mermaid from 'mermaid';
 
+    export let workerApi: any;
     export let content = '';
     export let type: 'mermaid' | 'pdf' | 'text' = 'text';
     export let theme: 'light' | 'dark' = 'dark';
@@ -74,12 +75,37 @@
         }
     }
 
+    async function digestMessage(message: string) {
+        const msgUint8 = new TextEncoder().encode(message);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
+    }
+
     async function renderMermaid() {
         renderId++;
         errorMessage = '';
         try {
-            mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' });
-            const { svg } = await mermaid.render('mermaid-svg-' + renderId, content);
+            const hash = await digestMessage(content + theme);
+            let svg = null;
+            if (workerApi) {
+                svg = await workerApi.loadFromCache(hash);
+            }
+
+            if (!svg) {
+                mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' });
+                const renderResult = await mermaid.render('mermaid-svg-' + renderId, content);
+                svg = renderResult.svg;
+
+                if (workerApi) {
+                    // Save to OPFS via execute_command wrapper
+                    // Note: This takes the raw SVG string
+                    // Single quotes in SVG need escaping for the bash-like `echo '...' > file` command
+                    const escapedSvg = svg.replace(/'/g, "'\\''");
+                    await workerApi.saveToCache(hash, escapedSvg);
+                }
+            }
 
             if (svgContainer) {
                 if (panZoomInstance) {

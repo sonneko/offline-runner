@@ -192,6 +192,7 @@
 
         if (!openTabs.includes(path)) {
             openTabs = [...openTabs, path];
+            saveSession();
         }
 
         // Check for autosaved version
@@ -276,12 +277,43 @@
     async function closeTab(path: string, event: Event) {
         event.stopPropagation();
         openTabs = openTabs.filter(t => t !== path);
+        saveSession();
         if (currentPath === path) {
             if (openTabs.length > 0) {
                 await switchTab(openTabs[openTabs.length - 1]);
             } else {
                 newFile();
             }
+        }
+    }
+
+    function saveSession() {
+        localStorage.setItem('editor_open_tabs', JSON.stringify(openTabs));
+        if (currentPath) {
+            localStorage.setItem('editor_current_tab', currentPath);
+        } else {
+            localStorage.removeItem('editor_current_tab');
+        }
+    }
+
+    export async function restoreSession() {
+        const tabsStr = localStorage.getItem('editor_open_tabs');
+        if (tabsStr) {
+            try {
+                openTabs = JSON.parse(tabsStr);
+            } catch (e) {
+                openTabs = [];
+            }
+        }
+        const activePath = localStorage.getItem('editor_current_tab');
+        if (activePath) {
+            // Load the last active tab content
+            if (!openTabs.includes(activePath)) {
+                openTabs = [...openTabs, activePath];
+            }
+            await loadFile(activePath);
+        } else if (openTabs.length > 0) {
+             await loadFile(openTabs[0]);
         }
     }
 </script>
