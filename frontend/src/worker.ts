@@ -10,9 +10,17 @@ let sharedBuffer: SharedArrayBuffer;
 let sharedInt32: Int32Array;
 let dataBuffer: Uint8Array;
 let ioWorker: Worker;
+let sqliteWorker: Worker;
+let aiWorker: Worker;
+
+let queryIdCounter = 0;
+const pendingQueries = new Map<number, { resolve: Function, reject: Function }>();
+const pendingAiRequests = new Map<number, { resolve: Function, reject: Function }>();
+let aiProgressCallback: ((msg: string) => void) | null = null;
 
 const api = {
-    async init(logCallback?: (msg: string) => void) {
+    async init(logCallback?: (msg: string) => void, progressCallback?: (msg: string) => void) {
+        aiProgressCallback = progressCallback || null;
         if (logCallback) {
             const originalConsoleLog = console.log;
             console.log = (...args) => {
@@ -45,6 +53,49 @@ const api = {
 
         // Initialize I/O Worker
         ioWorker = new Worker(new URL('./io-worker.ts', import.meta.url), { type: 'module' });
+
+        // Initialize SQLite Worker
+        sqliteWorker = new Worker(new URL('./sqlite-worker.ts', import.meta.url), { type: 'module' });
+        sqliteWorker.onmessage = (e) => {
+            if (e.data.type === 'result' || e.data.type === 'export_result' || e.data.type === 'import_result') {
+                const pending = pendingQueries.get(e.data.id);
+                if (pending) {
+                    if (e.data.error) {
+                        pending.reject(new Error(e.data.error));
+                    } else {
+                        pending.resolve(e.data.data !== undefined ? e.data.data : (e.data.rows !== undefined ? e.data.rows : e.data.success));
+                    }
+                    pendingQueries.delete(e.data.id);
+                }
+            }
+        };
+        sqliteWorker.postMessage({ type: 'init' });
+
+        // Initialize AI Worker
+        aiWorker = new Worker(new URL('./ai-worker.ts', import.meta.url), { type: 'module' });
+        aiWorker.onmessage = (e) => {
+            if (e.data.type === 'progress') {
+                if (aiProgressCallback) aiProgressCallback(e.data.message);
+            } else if (e.data.type === 'ready') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.resolve();
+                    pendingAiRequests.delete(e.data.id);
+                }
+            } else if (e.data.type === 'result') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.resolve(e.data.text);
+                    pendingAiRequests.delete(e.data.id);
+                }
+            } else if (e.data.type === 'error') {
+                const pending = pendingAiRequests.get(e.data.id);
+                if (pending) {
+                    pending.reject(new Error(e.data.error));
+                    pendingAiRequests.delete(e.data.id);
+                }
+            }
+        };
 
         // Check storage persist permission
         if (navigator.storage && navigator.storage.persist) {
@@ -98,11 +149,129 @@ const api = {
         return "Wasm Initialized with Sync I/O";
     },
     async executeCommand(cmdLine: string) {
+        if (cmdLine.trim().startsWith('translate ')) {
+            const textToTranslate = cmdLine.substring(10).trim().replace(/^["'](.*)["']$/, '$1');
+            try {
+                const result = await api.translateText(textToTranslate);
+                return `Translation: ${result}`;
+            } catch (e: any) {
+                return `Translation Error: ${e.message}`;
+            }
+        }
+        if (cmdLine.trim().startsWith('sqlite ')) {
+            const sql = cmdLine.substring(7).trim();
+            // remove surrounding quotes if any
+            const cleanedSql = sql.replace(/^["'](.*)["']$/, '$1');
+
+            if (cleanedSql === '.export') {
+                try {
+                    const data = await api.exportSqliteDb();
+                    const b64 = btoa(String.fromCharCode.apply(null, Array.from(data)));
+                    return `Exported DB:\n${b64}`;
+                } catch (e: any) {
+                    return `SQLite Export Error: ${e.message}`;
+                }
+            }
+
+            if (cleanedSql.startsWith('.import ')) {
+                try {
+                    const b64 = cleanedSql.substring(8).trim();
+                    const binaryString = atob(b64);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    await api.importSqliteDb(bytes);
+                    return 'SQLite DB imported successfully.';
+                } catch (e: any) {
+                    return `SQLite Import Error: ${e.message}`;
+                }
+            }
+
+            let finalSql = cleanedSql;
+            if (cleanedSql.startsWith('explain ')) {
+                finalSql = 'EXPLAIN QUERY PLAN ' + cleanedSql.substring(8);
+            }
+
+            try {
+                const rows = await api.querySqlite(finalSql);
+                if (!rows || rows.length === 0) return 'Query executed successfully. (0 rows)';
+
+                // Generate ASCII table for rows
+                const keys = Object.keys(rows[0]);
+                const colWidths = keys.map(k => k.length);
+
+                // Only measure first 1000 rows to prevent blocking the UI for huge datasets
+                const sampleRows = rows.slice(0, 1000);
+                sampleRows.forEach(row => {
+                    keys.forEach((k, i) => {
+                        const valLen = String(row[k]).length;
+                        if (valLen > colWidths[i]) colWidths[i] = valLen;
+                    });
+                });
+
+                const buildSeparator = () => '+' + colWidths.map(w => '-'.repeat(w + 2)).join('+') + '+';
+                const buildRow = (rowData: any) => '|' + keys.map((k, i) => ' ' + String(rowData[k]).padEnd(colWidths[i], ' ') + ' ').join('|') + '|';
+
+                let output = buildSeparator() + '\n';
+                output += '|' + keys.map((k, i) => ' ' + k.padEnd(colWidths[i], ' ') + ' ').join('|') + '|\n';
+                output += buildSeparator() + '\n';
+
+                const maxRowsToDisplay = 1000;
+                rows.slice(0, maxRowsToDisplay).forEach(row => {
+                    output += buildRow(row) + '\n';
+                });
+
+                if (rows.length > maxRowsToDisplay) {
+                    output += `| ... ${rows.length - maxRowsToDisplay} more rows omitted for streaming performance ... |\n`;
+                }
+                output += buildSeparator();
+
+                return output;
+            } catch (e: any) {
+                return `SQLite Error: ${e.message}`;
+            }
+        }
         try {
             return await execute_command(cmdLine);
         } catch (e) {
             return `Error: ${e}`;
         }
+    },
+    async querySqlite(sql: string): Promise<any[]> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'query', sql, id });
+        });
+    },
+    async exportSqliteDb(): Promise<Uint8Array> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'export', id });
+        });
+    },
+    async importSqliteDb(data: Uint8Array): Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingQueries.set(id, { resolve, reject });
+            sqliteWorker.postMessage({ type: 'import', data, id });
+        });
+    },
+    async initAiModel(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingAiRequests.set(id, { resolve, reject });
+            aiWorker.postMessage({ type: 'init', id });
+        });
+    },
+    async translateText(text: string, targetLang: string = 'jpn_Jpan'): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const id = queryIdCounter++;
+            pendingAiRequests.set(id, { resolve, reject });
+            aiWorker.postMessage({ type: 'translate', text, targetLang, id });
+        });
     },
     // Sync I/O call for Rust (to be called via JS bridge)
     readSync(path: string, offset: number, length: number): Uint8Array {

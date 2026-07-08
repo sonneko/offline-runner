@@ -90,31 +90,31 @@
 - [x] 検索・置換パネルの実装
 
 ## G. SQLite Wasm 統合 (8タスク)
-- [ ] SQLite WasmバイナリのWorkerへのロード
-- [ ] OPFS VFS (公式) との連携設定
-- [ ] SQL実行用インターフェースのJS実装
-- [ ] CLIコマンド sqlite "QUERY" の実装
-- [ ] クエリ結果のテーブル表示 (ASCII Table) 実装
-- [ ] 巨大な結果セットに対するストリーミングUI表示
-- [ ] DBファイルのインポート/エクスポート機能
-- [ ] SQLiteの explain query plan サポート
+- [x] SQLite WasmバイナリのWorkerへのロード
+- [x] OPFS VFS (公式) との連携設定
+- [x] SQL実行用インターフェースのJS実装
+- [x] CLIコマンド sqlite "QUERY" の実装
+- [x] クエリ結果のテーブル表示 (ASCII Table) 実装
+- [x] 巨大な結果セットに対するストリーミングUI表示
+- [x] DBファイルのインポート/エクスポート機能
+- [x] SQLiteの explain query plan サポート
 
 ## H. Mermaid.js & Preview (8タスク)
-- [ ] Mermaidレンダリング専用の隠しiframe/Workerの構築
-- [ ] プレビュー更新のデバウンス（入力停止500ms後）の実装
+- [x] Mermaidレンダリング専用の隠しiframe/Workerの構築
+- [x] プレビュー更新のデバウンス（入力停止500ms後）の実装
 - [ ] 生成SVGのハッシュキャッシュ（OPFS保存）
-- [ ] SVGプレビューのピンチズーム/パン機能
-- [ ] Mermaidエラー時のエラーメッセージUI表示
-- [ ] ダークモード/ライトモードに応じたMermaidテーマ変更
-- [ ] PDF生成（PDF-lib）によるMermaid図面のPDF化
-- [ ] プレビュー画面のフルスクリーン切り替え
+- [x] SVGプレビューのピンチズーム/パン機能
+- [x] Mermaidエラー時のエラーメッセージUI表示
+- [x] ダークモード/ライトモードに応じたMermaidテーマ変更
+- [x] PDF生成（PDF-lib）によるMermaid図面のPDF化
+- [x] プレビュー画面のフルスクリーン切り替え
 
 ## I. オフラインAI・翻訳 (7タスク)
-- [ ] Transformers.js の初期化とモデルDL進捗バーの実装
-- [ ] 小規模モデル（Qwen1.5-0.5B等）のキャッシュ管理
-- [ ] WebGPU의 利用可否判定とFallback設定
-- [ ] テキスト翻訳コマンド translate "TEXT" の実装
-- [ ] 翻訳結果のサイドパネル表示
+- [x] Transformers.js の初期化とモデルDL進捗バーの実装
+- [x] 小規模モデル（Qwen1.5-0.5B等）のキャッシュ管理
+- [x] WebGPUの利用可否判定とFallback設定
+- [x] テキスト翻訳コマンド translate "TEXT" の実装
+- [x] 翻訳結果のサイドパネル表示
 - [ ] AIによるMSSコード生成補助（プロンプト送信）
 - [ ] ローカルRAG（OPFS内のファイルをAIが読む）の基礎実験
 

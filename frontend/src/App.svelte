@@ -16,6 +16,7 @@
   let commandInput = '';
   let commandInputEl: HTMLInputElement;
   let storageUsageInfo = '';
+  let theme: 'light' | 'dark' = 'dark';
 
   $: if (showCommandPalette && commandInputEl) {
       commandInputEl.focus();
@@ -41,15 +42,27 @@
     // If there are issues, it might be due to Vite's worker loading mechanism.
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     workerApi = Comlink.wrap(worker);
-    await workerApi.init(Comlink.proxy((msg: string) => {
-        if (terminal) {
-            terminal.printLog(msg);
-        }
-    }));
+    await workerApi.init(
+        Comlink.proxy((msg: string) => {
+            if (terminal) {
+                terminal.printLog(msg);
+            }
+        }),
+        Comlink.proxy((msg: string) => {
+            // Re-use storageUsageInfo for progress for now
+            storageUsageInfo = msg;
+        })
+    );
 
     updateStorageUsage();
     // Periodically update storage usage
     const storageInterval = setInterval(updateStorageUsage, 30000);
+
+    // Initialize AI models in the background
+    workerApi.initAiModel().then(() => {
+        storageUsageInfo = 'AI Ready';
+        setTimeout(() => updateStorageUsage(), 2000);
+    });
 
     window.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
@@ -80,11 +93,18 @@
       previewType = 'mermaid';
   }
 
+  function showPdf() {
+      previewType = 'pdf';
+  }
+
   async function handleCommand(e: KeyboardEvent) {
       if (e.key === 'Enter' && workerApi) {
           const result = await workerApi.executeCommand(commandInput.trim());
           previewContent = result;
           previewType = 'text';
+          if (commandInput.trim().startsWith('translate ')) {
+               storageUsageInfo = 'Translation Panel Activated';
+          }
           showCommandPalette = false;
           commandInput = '';
           if (fileTree) fileTree.refresh();
@@ -100,12 +120,17 @@
   function handleFileSave() {
       if (fileTree) fileTree.refresh();
   }
+
+  function handleThemeChange(e: CustomEvent) {
+      theme = e.detail.isDarkMode ? 'dark' : 'light';
+  }
 </script>
 
 <main>
   <div class="top-bar">
     <button on:click={runScript}>Run MSS</button>
     <button on:click={showMermaid}>Demo Mermaid</button>
+    <button on:click={showPdf}>Generate PDF</button>
     <div class="info">
         {#if storageUsageInfo}
             <span style="margin-right: 15px;">{storageUsageInfo}</span>
@@ -123,12 +148,12 @@
                 <Editor bind:this={editor} {workerApi} on:save={handleFileSave} />
             </div>
             <div class="pane preview-pane">
-                <Preview content={previewContent} type={previewType} />
+                <Preview content={previewContent} type={previewType} {theme} />
             </div>
         </div>
         <div class="pane terminal-pane">
             {#if workerApi}
-                <Terminal bind:this={terminal} {workerApi} on:commandExecuted={() => fileTree?.refresh()} />
+                <Terminal bind:this={terminal} {workerApi} on:commandExecuted={() => fileTree?.refresh()} on:themeChanged={handleThemeChange} />
             {/if}
         </div>
     </div>
