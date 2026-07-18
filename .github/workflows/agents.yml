@@ -25,4 +25,4 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.LLM_API }}
         with:
-          model: groq/qwen-2.5-coder-32b
+          model: qwen/qwen3-32b
